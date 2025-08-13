@@ -3,7 +3,14 @@
 import uvicorn
 import os
 import sys
+import logging
 from dotenv import load_dotenv
+
+# Configure logging early so module loggers (logger.info) are visible in terminal
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 # Load environment variables from .env file before any other imports
 load_dotenv()

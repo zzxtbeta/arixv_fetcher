@@ -1,10 +1,17 @@
 import { Card, Input, List, Tag, Typography, Space, message } from 'antd'
 import { useState } from 'react'
 import { searchAuthor } from '../api'
+import { ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons'
 
 export default function AuthorSearch() {
   const [loading, setLoading] = useState(false)
   const [items, setItems] = useState<any[]>([])
+
+  function parseRankValue(v?: string): number | null {
+    if (!v) return null
+    const m = String(v).match(/\d+/)
+    return m ? Number(m[0]) : null
+  }
 
   async function onSearch(v: string) {
     if (!v?.trim()) return
@@ -29,9 +36,50 @@ export default function AuthorSearch() {
           renderItem={(it) => (
             <List.Item>
               <Space direction="vertical" style={{ width: '100%' }}>
-                <Typography.Title level={5} style={{ margin: 0 }}>{it.author?.name}</Typography.Title>
+                <Space align="center" wrap>
+                  <Typography.Title level={5} style={{ margin: 0 }}>{it.author?.name}</Typography.Title>
+                  {it.author?.orcid ? (
+                    <Tag color="success">
+                      <a href={`https://orcid.org/${it.author.orcid}`} target="_blank" rel="noreferrer">
+                        ORCID: {it.author.orcid}
+                      </a>
+                    </Tag>
+                  ) : null}
+                </Space>
                 <Space wrap>
-                  {(it.affiliations || []).map((a: any) => <Tag key={a.id}>{a.aff_name}</Tag>)}
+                  {(it.affiliations || []).map((a: any) => {
+                    const y25n = parseRankValue(a?.qs?.y2025)
+                    const y24n = parseRankValue(a?.qs?.y2024)
+                    let arrow: any = null
+                    if (y25n !== null && y24n !== null && y25n !== y24n) {
+                      if (y25n < y24n) {
+                        arrow = <ArrowUpOutlined style={{ color: '#cf1322' }} />
+                      } else if (y25n > y24n) {
+                        arrow = <ArrowDownOutlined style={{ color: '#52c41a' }} />
+                      }
+                    }
+                    return (
+                      <Card key={a.id} size="small" style={{ borderRadius: 8 }}>
+                        <Space direction="vertical" size={4}>
+                          <Typography.Text strong>{a.aff_name}</Typography.Text>
+                          {(a.role || a.start_date || a.end_date || a.latest_time) ? (
+                            <Typography.Text type="secondary">
+                              {a.role ? `${a.role}` : '—'}
+                              {(a.start_date || a.end_date) ? ` · ${a.start_date || '?'} — ${a.end_date || 'present'}` : ''}
+                              {a.latest_time ? ` · latest: ${a.latest_time}` : ''}
+                            </Typography.Text>
+                          ) : null}
+                          {a?.qs?.y2025 || a?.qs?.y2024 ? (
+                            <Space size={6} align="center">
+                              <Tag color="geekblue">qs25: {a.qs?.y2025}</Tag>
+                              {arrow}
+                              <Tag>qs24: {a.qs?.y2024}</Tag>
+                            </Space>
+                          ) : null}
+                        </Space>
+                      </Card>
+                    )
+                  })}
                 </Space>
                 <Typography.Text strong>Recent papers</Typography.Text>
                 <ul style={{ paddingLeft: 18, margin: 0 }}>

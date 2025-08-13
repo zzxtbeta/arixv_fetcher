@@ -5,8 +5,9 @@
 - 从 arXiv 抓取近 N 天论文，写入规范化数据库表（papers/authors/affiliations 等），并为作者抽取机构（PDF 首页 + LLM 映射）。
 - 提供最小聊天接口（DashScope 兼容 OpenAI）。
 - 提供前端 React 看板（Vite + Ant Design），展示总览与作者模糊检索（机构、最近论文、合作作者）。
+- 新增 ORCID 富化：基于作者姓名 + 机构相似匹配补全作者 ORCID 与作者-机构的 role/start_date/end_date。
 
-技术栈：FastAPI、LangGraph（Send 并行）、psycopg3、requests、pdfplumber、Supabase Python SDK（通用查询）、React + Ant Design。
+技术栈：FastAPI、LangGraph（Send 并行）、psycopg3、requests、pdfplumber、Supabase Python SDK（通用查询）、React + Ant Design、ORCID Public API。
 
 ## 目录结构
 - `src/agent/graph.py`：最小聊天图（start → chat → end）
@@ -64,43 +65,61 @@ python -m src.main
 - 抓取与入库：`POST /data/fetch-arxiv-today`
   - 查询参数：
     - `thread_id`：LangGraph checkpoint 线程 ID
-    - `days`：近 N 天（UTC），默认 1
     - `categories`：逗号分隔，如 `cs.AI,cs.CV`；传 `all|*` 表示不过滤分类
     - `max_results`：抓取上限（分页累积），默认 200
+    - `start_date`：起始日期（YYYY-MM-DD）。若未提供，将默认 `today-1`（UTC）。
+    - `end_date`：结束日期（YYYY-MM-DD，含当日）。若未提供，将默认 `today`（UTC）；最大不可超过当天。
   - 示例：
 ```bash
-  curl -X POST "http://localhost:8000/data/fetch-arxiv-today?thread_id=1&days=3&categories=all&max_results=200"
+curl -X POST \
+  "http://localhost:8000/data/fetch-arxiv-today?thread_id=1&categories=all&max_results=200&start_date=2025-08-11&end_date=2025-08-12"
 ```
   - 成功响应：
   ```json
   { "status": "success", "inserted": 123, "skipped": 45, "fetched": 168 }
   ```
 
+- 按 ID 抓取与入库：`POST /data/fetch-arxiv-by-id?ids=2504.14636,2504.14645&thread_id=...`
+
+- 现有机构对齐（QS 富化）：`POST /data/enrich-affiliations-qsrank`
+  - 功能：基于 `docs/qs-world-rankings-2025.csv` 将 `affiliations.country` 与 `affiliation_rankings`（QS 2024/2025）补全。
+  - 匹配：忽略大小写/空格；自动去括号、去部门前缀、截取逗号前主体；支持相似度匹配（阈值设定，避免误配）。
+  - 可选参数：`force_country`、`force_rank`（布尔），用于覆盖已有国家/排名。
+
+- 历史 ORCID 富化（临时）：`POST /data/enrich-orcid`
+  - 功能：批量为既有作者-机构关系补齐 `authors.orcid` 与 `author_affiliation.role/start_date/end_date`。
+  - 匹配：作者姓名严格相等（去空格小写后），机构采用与 QS 对齐一致的变体归一化 + 相似度匹配（阈值≈0.86）。
+  - 选项：`only_missing`（默认 true）、`batch_size`、`max_rows`。
+
+- 历史 latest_time 回填（临时）：`POST /data/backfill-author-affiliation-latest-time`
+  - 功能：按作者发表论文的最大 `published` 回填 `author_affiliation.latest_time`。幂等可重复执行。
+
 - 看板总览：`GET /dashboard/overview`
-  - 返回 `papers/authors/affiliations/categories` 计数
-
 - 作者检索：`GET /dashboard/author?q=模糊人名`
-  - 返回：作者、机构、最近论文、Top 合作者
-
 - 聊天：`POST /agent/chat`
-  - 请求：`{ "text": "hello", "thread_id": "optional", "model": "optional" }`
-  - 响应：`{ "reply": "..." }`
 
 ## 数据处理（简述）
 
 - **arXiv 获取**：
   - 使用官方 API `search_query` 构造时间窗查询（`submittedDate`/`lastUpdatedDate`），结合分类（`cat:xxx`）与分页（`start/max_results`）。
-  - 查询参数来自接口 `days/categories/max_results`；`categories=all|*` 时不做分类过滤。
+  - 查询参数支持 `start_date/end_date`（优先）或默认 `[today-1, today]`，`categories=all|*` 时不做分类过滤。
   - 解析 Atom Feed 获取 `id/title/summary/authors/categories/pdf 链接/published/updated` 等字段。
   - 幂等：以 `arxiv_entry` 去重（`ON CONFLICT DO NOTHING`），已存在则跳过；也兜底按 `(paper_title, published)` 唯一对照。
 
 - **机构抽取**：
-  - 使用 `pdfplumber` 抽取 PDF 首页文本（失败有短退避重试，不阻断流程）。
-  - 使用 Qwen（DashScope 兼容 OpenAI）按严格 JSON 将作者列表映射到机构名列表，按原作者顺序返回。
-  - 通过 LangGraph `Send` 对每篇论文并行执行抽取，并用全局信号量 `AFFILIATION_MAX_CONCURRENCY`（默认 4）限流；全部完成后再统一入库，避免写库锁冲突。
+  - 使用 `pdfplumber` 抽取 PDF 首页文本（短退避重试，不阻断流程）。
+  - 使用 Qwen 将作者列表映射到机构名列表（英文标准化空格/大小写）。
+  - LangGraph `Send` 并行抽取，统一写库避免锁冲突。
+
+- **QS 富化**：
+  - 抓取流程与历史对齐接口均会按 QS CSV 对机构做补全：命中则写 `affiliations.country`，并为 2024/2025 写入 `affiliation_rankings`；未命中不影响主流程。
+
+- **ORCID 富化**：
+  - 新数据：抓取流程内并行尝试 ORCID（受限并发），仅在“作者姓名严格一致 + 机构相似匹配通过”时，补全 `authors.orcid` 与 `author_affiliation.role/start_date/end_date`（保守更新）。
+  - 老数据：可用临时接口一键回填；失败或未命中均不影响主流程。
 
 - **并发与可靠性**：
-  - PDF/LLM 并发受控；数据库写入集中在单节点串行执行，避免死锁。
+  - PDF/LLM 与 ORCID 查询并发受控；数据库写入集中在单节点串行执行，避免死锁。
   - 错误与空结果被安全吞吐，保证主流程可完成；缺失字段入库为 NULL。
 
 ## 前端看板（frontend/）
@@ -108,8 +127,8 @@ python -m src.main
 - 技术栈：Vite + React + TypeScript + Ant Design
 - 功能：
   - 总览卡片（论文/作者/机构/类别计数）
-  - 作者模糊检索（大小写与空格不敏感）：展示机构、最近论文、常合作作者
-  - 后续可扩展“最新论文流”等
+  - 作者模糊检索（大小写与空格不敏感）：展示 ORCID、机构（含 role/起止/latest）、最近论文、常合作作者，QS 标签含 2025/2024 且显示名次变化箭头
+  - 最新论文流（分页）；支持在顶部直接发起抓取（日期范围/类别/上限、或按 ID）
 
 ### 界面预览
 
@@ -131,6 +150,7 @@ python -m src.main
 ## 备注
 - 若抓取响应 `inserted=0, skipped=0` 且 `fetched>0`：通常是并行聚合/版本不一致或 RLS/权限问题；已将 Send 并行按官方推荐接线并在写库前汇合。Supabase RLS 下请确保 INSERT 策略放行。
 - 若机构为空：可能 PDF 不可抽取或 LLM 返回不规范；已加入短退避重试与严格 JSON 解析，仍失败则为空。
+- 临时维护接口（`/data/enrich-orcid`、`/data/backfill-author-affiliation-latest-time`）仅用于历史数据补齐，完成后可移除路由或停用。
 
 ---
 如需扩展：

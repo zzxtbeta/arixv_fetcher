@@ -38,7 +38,7 @@ create table affiliations (
     city varchar(100)                  -- 需外部数据源
 );
   2. 说明：
-    1. 数据唯一性通过“aff_name”字段实现
+    1. 数据唯一性通过“aff_name”字段实现；在业务层进行规范化去重：忽略大小写与空白字符差异（例如 "Zhejiang University" 与 "zhejiangUniversity" 视为同一机构）。
     2. "aff_type enum"字段用来区分作者所属机构是为大学还是公司研究所；“rank_system”用来表示对机构排名所参考的标准，因为大学有QS排名等，而QS不适用于公司排名；“rank_value”表示在指定的排名体系中的位次，暂定类型为varchar，也可换成int。
 4. Ranking_systems
   1. 建表SQL
@@ -96,15 +96,18 @@ create table author_affiliation (
     id int primary key,
     author_id int,
     affiliation_id int,
-    latest_time date,                   -- 需外部数据源
-    work varchar(100),                  -- 需外部数据源
+    role text,                         -- 原 work 字段，改为更通用的角色描述
+    start_date date,                   -- 在该机构的起始时间（可为空）
+    end_date date,                     -- 在该机构的截止时间（可为空）
+    latest_time date,                  -- 该作者以此机构发表论文的“最近一次”时间
     FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE CASCADE,
     FOREIGN KEY (affiliation_id) REFERENCES affiliations(id) ON DELETE CASCADE,
     unique (author_id, affiliation_id)
 );
   2. 说明：
-    1. 该表只起到关联作用，无其他额外信息 （修改说明：添加字段"latest_time"，表示该作者在这个机构最新发表的论文的时间；添加字段"work"，表示该author在此机构的职位是什么）
-    2. 数据唯一性依赖复合键(author_id, affiliation_id)实现
+    1. 该表只起到关联作用；新增 `role`（TEXT）用于记录作者在机构内的角色/职位信息；新增 `start_date` 与 `end_date` 表示在该机构的起止时间（若未知可为空）。
+    2. `latest_time` 表示“该作者以该机构署名发表论文的最近一次日期”；当前抓取流程未填充此字段，后续落库或对齐步骤需要注意补写（可由论文 `published` 聚合得出）。
+    3. 数据唯一性依赖复合键(author_id, affiliation_id)实现
 3. paper_category
   1. 建表SQL
 create table paper_category (

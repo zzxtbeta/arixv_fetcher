@@ -14,21 +14,30 @@ export async function searchAuthor(q: string) {
   return data as {
     query: string
     results: Array<{
-      author: { id: number; name: string }
-      affiliations: Array<{ id: number; aff_name: string }>
+      author: { id: number; name: string; orcid?: string }
+      affiliations: Array<{ id: number; aff_name: string; country?: string; role?: string; start_date?: string; end_date?: string; latest_time?: string; qs?: { y2025?: string; y2024?: string } }>
       recent_papers: Array<{ id: number; paper_title: string; published: string; pdf_source: string; arxiv_entry: string }>
       top_collaborators: Array<{ id: number; name: string; count: number }>
     }>
   }
 }
 
-export async function triggerFetch({ thread_id, days, categories, max_results }: { thread_id: string; days: number; categories?: string; max_results?: number }) {
+export async function triggerFetch({ categories, max_results, start_date, end_date }: { categories?: string; max_results?: number; start_date?: string; end_date?: string }) {
   const params = new URLSearchParams()
-  params.set('thread_id', thread_id)
-  params.set('days', String(days))
   if (categories) params.set('categories', categories)
   if (max_results) params.set('max_results', String(max_results))
+  if (start_date && end_date) {
+    params.set('start_date', start_date)
+    params.set('end_date', end_date)
+  }
   const { data } = await api.post(`/data/fetch-arxiv-today?${params.toString()}`)
+  return data as { status: string; inserted: number; skipped: number; fetched: number }
+}
+
+export async function triggerFetchById({ ids }: { ids: string }) {
+  const params = new URLSearchParams()
+  params.set('ids', ids)
+  const { data } = await api.post(`/data/fetch-arxiv-by-id?${params.toString()}`)
   return data as { status: string; inserted: number; skipped: number; fetched: number }
 }
 

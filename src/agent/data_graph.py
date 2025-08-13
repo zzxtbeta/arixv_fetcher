@@ -10,7 +10,7 @@ ArXiv data processing graph: fetch latest arXiv papers within a date window and 
 import os
 import logging
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time
 from typing import Dict, Any, List, Optional
 
 import requests
@@ -24,14 +24,36 @@ from src.agent.state import DataProcessingState
 from src.db.database import DatabaseManager
 from src.agent.prompts import AFFILIATION_SYSTEM_PROMPT, build_affiliation_user_prompt
 
+import csv
+import re
+
 logger = logging.getLogger(__name__)
 
 ARXIV_QUERY_API = "https://export.arxiv.org/api/query"
 HTTP_HEADERS = {"User-Agent": "arxiv-scraper/0.1 (+https://example.com)"}
 
 # Bounded concurrency for Send tasks to avoid PDF/LLM rate limits
-_AFF_MAX = int(os.getenv("AFFILIATION_MAX_CONCURRENCY", "4"))
+_AFF_MAX = int(os.getenv("AFFILIATION_MAX_CONCURRENCY", "5"))
 _AFF_SEM = asyncio.Semaphore(_AFF_MAX)
+# Bounded concurrency for ORCID lookups
+_ORCID_MAX = int(os.getenv("ORCID_MAX_CONCURRENCY", "5"))
+_ORCID_SEM = asyncio.Semaphore(_ORCID_MAX)
+_ORCID_CACHE: Dict[str, Optional[Dict[str, Any]]] = {}
+_ORCID_SESSION = None
+
+# Reusable HTTP session for arXiv PDF downloads
+_PDF_SESSION = None
+
+def _pdf_session():
+    global _PDF_SESSION
+    if _PDF_SESSION is None:
+        try:
+            s = requests.Session()
+            s.headers.update(HTTP_HEADERS)
+            _PDF_SESSION = s
+        except Exception:
+            _PDF_SESSION = requests
+    return _PDF_SESSION
 
 
 # ---------------------- Fetch and parse arXiv ----------------------
@@ -116,9 +138,7 @@ def _build_search_query(categories: List[str], start_dt: datetime, end_dt: datet
     return f"{date_window} AND ({cat_q})" if cat_q else date_window
 
 
-def _search_papers_by_window(categories: List[str], days: int, max_results: int = 200) -> List[Dict[str, Any]]:
-    end_dt = datetime.now(timezone.utc)
-    start_dt = end_dt - timedelta(days=max(1, days))
+def _search_papers_by_range(categories: List[str], start_dt: datetime, end_dt: datetime, max_results: int = 200) -> List[Dict[str, Any]]:
     search_query = _build_search_query(categories, start_dt, end_dt)
 
     results: List[Dict[str, Any]] = []
@@ -146,6 +166,29 @@ def _search_papers_by_window(categories: List[str], days: int, max_results: int 
     return results[:max_results]
 
 
+def _search_papers_by_window(categories: List[str], days: int, max_results: int = 200) -> List[Dict[str, Any]]:
+    end_dt = datetime.now(timezone.utc)
+    start_dt = end_dt - timedelta(days=max(1, days))
+    return _search_papers_by_range(categories, start_dt, end_dt, max_results)
+
+
+def _search_papers_by_ids(id_list: List[str]) -> List[Dict[str, Any]]:
+    """Fetch papers by explicit arXiv id list using id_list param (batched)."""
+    ids = [i.strip() for i in (id_list or []) if i and i.strip()]
+    if not ids:
+        return []
+    # arXiv suggests batching (commonly <= 50 per call)
+    batch_size = 50
+    results: List[Dict[str, Any]] = []
+    for i in range(0, len(ids), batch_size):
+        batch = ids[i:i + batch_size]
+        params = {"id_list": ",".join(batch)}
+        resp = requests.get(ARXIV_QUERY_API, params=params, headers=HTTP_HEADERS, timeout=30)
+        resp.raise_for_status()
+        results.extend(_parse_arxiv_atom(resp.text))
+    return results
+
+
 def _iso_to_date(iso_str: Optional[str]) -> Optional[str]:
     if not iso_str:
         return None
@@ -158,16 +201,44 @@ def _iso_to_date(iso_str: Optional[str]) -> Optional[str]:
 # ---------------------- Nodes ----------------------
 
 async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) -> DataProcessingState:
-    """Fetch latest papers from arXiv within last N days (UTC)."""
+    """Fetch latest papers from arXiv by date window, explicit date range or id_list."""
     try:
         cfg = config.get("configurable", {}) if isinstance(config, dict) else {}
+        # Optional id_list overrides window/range query
+        id_list = cfg.get("id_list")
+        if isinstance(id_list, str):
+            id_list = [s.strip() for s in id_list.split(",") if s.strip()]
+
         categories: List[str] = cfg.get("categories") or [
             c.strip() for c in os.getenv("ARXIV_CATEGORIES", "cs.AI,cs.CV").split(",") if c.strip()
         ]
         days: int = int(cfg.get("days", 1))
         max_results: int = int(cfg.get("max_results", 200))
+        start_date: Optional[str] = cfg.get("start_date")
+        end_date: Optional[str] = cfg.get("end_date")
 
-        raw = await asyncio.to_thread(_search_papers_by_window, categories, days, max_results)
+        if id_list:
+            raw = await asyncio.to_thread(_search_papers_by_ids, id_list)
+            logger.info(f"arXiv fetch by id_list: count={len(raw)}")
+        else:
+            # Prefer explicit date range if both provided
+            if start_date and end_date:
+                try:
+                    sd = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                    ed = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                    start_dt = datetime.combine(sd.date(), time(0, 0, tzinfo=timezone.utc))
+                    end_dt = datetime.combine(ed.date(), time(23, 59, tzinfo=timezone.utc))
+                    raw = await asyncio.to_thread(_search_papers_by_range, categories, start_dt, end_dt, max_results)
+                    cats_label = ",".join(categories) if categories else "all"
+                    # logger.info(f"arXiv fetch by range: {start_date} to {end_date}, categories={cats_label}, fetched={len(raw)}")
+                except Exception:
+                    raw = await asyncio.to_thread(_search_papers_by_window, categories, days, max_results)
+                    cats_label = ",".join(categories) if categories else "all"
+                    # logger.info(f"arXiv fetch by window (fallback): days={days}, categories={cats_label}, fetched={len(raw)}")
+            else:
+                raw = await asyncio.to_thread(_search_papers_by_window, categories, days, max_results)
+                cats_label = ",".join(categories) if categories else "all"
+                logger.info(f"arXiv fetch by window: days={days}, categories={cats_label}, fetched={len(raw)}")
         return {
             "processing_status": "fetched",
             "raw_papers": raw,
@@ -193,8 +264,16 @@ def _download_first_page_text(pdf_url: str, timeout: int = 60) -> str:
     try:
         import pdfplumber
         from io import BytesIO
+        # suppress noisy pdfminer warnings for malformed PDFs
+        try:
+            logging.getLogger("pdfminer").setLevel(logging.ERROR)
+            logging.getLogger("pdfminer.pdfinterp").setLevel(logging.ERROR)
+            logging.getLogger("pdfminer.cmapdb").setLevel(logging.ERROR)
+        except Exception:
+            pass
 
-        r = requests.get(pdf_url, timeout=timeout, headers=HTTP_HEADERS)
+        sess = _pdf_session()
+        r = sess.get(pdf_url, timeout=timeout, headers=HTTP_HEADERS)
         r.raise_for_status()
         with pdfplumber.open(BytesIO(r.content)) as pdf:
             if not pdf.pages:
@@ -213,8 +292,8 @@ def _download_first_page_text_with_retries(pdf_url: str) -> str:
             return txt
         # brief backoff
         try:
-            import time
-            time.sleep(0.4 * (i + 1))
+            import time as _t
+            _t.sleep(0.4 * (i + 1))
         except Exception:
             pass
         continue
@@ -227,6 +306,10 @@ async def process_single_paper(state: Dict[str, Any]) -> Dict[str, Any]:
     Input state must contain key `paper`. Returns {"papers": [enriched_paper]}.
     """
     paper = state.get("paper", {})
+    title = (paper.get("title") or "(untitled)").strip()
+    pub_label = _iso_to_date(paper.get("published_at")) or "unknown"
+    logger.info(f"Processing paper: '{title}' (published: {pub_label})")
+
     authors = paper.get("authors", [])
     pdf_url = paper.get("pdf_url")
     if not authors or not pdf_url:
@@ -259,12 +342,346 @@ async def process_single_paper(state: Dict[str, Any]) -> Dict[str, Any]:
             return {"papers": [{**paper, "author_affiliations": []}]}
 
 
+# ---------------------- ORCID enrichment ----------------------
+
+def _orcid_headers() -> Dict[str, str]:
+    client_id = os.getenv("ORCID_CLIENT_ID")
+    client_secret = os.getenv("ORCID_CLIENT_SECRET")
+    headers = {"Accept": "application/json", "User-Agent": "arxiv-scraper/0.1"}
+    # Public API works without auth; if member creds exist we could fetch token (omitted for brevity)
+    # Keep headers minimal to avoid coupling
+    return headers
+
+
+def _orcid_session():
+    global _ORCID_SESSION
+    if _ORCID_SESSION is None:
+        try:
+            s = requests.Session()
+            s.headers.update(_orcid_headers())
+            _ORCID_SESSION = s
+        except Exception:
+            _ORCID_SESSION = requests
+    return _ORCID_SESSION
+
+
+def _orcid_base_urls() -> Dict[str, str]:
+    # Use public API to avoid OAuth token handling; sufficient for read-public
+    base = "https://pub.orcid.org/v3.0"
+    return {"base": base, "search": f"{base}/search"}
+
+
+def _normalize_name_for_strict(s: str) -> str:
+    # Lowercase and collapse spaces for strict equality checks
+    return " ".join((s or "").lower().split())
+
+
+def _parse_orcid_date(d: str) -> Optional[str]:
+    # ORCID may return YYYY or YYYY-MM; coerce to YYYY-MM-DD by picking first day
+    if not d:
+        return None
+    txt = d.strip()
+    if len(txt) == 4 and txt.isdigit():
+        return f"{txt}-01-01"
+    if len(txt) == 7 and txt[4] == '-':
+        return f"{txt}-01"
+    if len(txt) >= 10:
+        return txt[:10]
+    return None
+
+
+def _best_aff_match_for_institution(aff_name: str, scholar: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    # Try to find best matching affiliation (employment first, then education)
+    from difflib import SequenceMatcher
+    target_norms = _normalize_aff_variants(aff_name)
+    if not target_norms:
+        return None
+    def score_one(org: str, dept: str) -> float:
+        best = 0.0
+        for k in _normalize_aff_variants(org):
+            for t in target_norms:
+                best = max(best, SequenceMatcher(None, t, k).ratio())
+        # dept helps if present
+        if dept:
+            for k in _normalize_aff_variants(dept):
+                for t in target_norms:
+                    best = max(best, SequenceMatcher(None, t, k).ratio())
+        return best
+    best_emp = None; best_emp_s = 0.0
+    for e in (scholar.get("employments") or []):
+        s = score_one(e.get("organization", ""), e.get("department", ""))
+        if s > best_emp_s:
+            best_emp_s = s; best_emp = e
+    best_edu = None; best_edu_s = 0.0
+    for e in (scholar.get("educations") or []):
+        s = score_one(e.get("organization", ""), e.get("department", ""))
+        if s > best_edu_s:
+            best_edu_s = s; best_edu = e
+    # Require reasonably high similarity; prefer employment
+    if best_emp and best_emp_s >= 0.86:
+        return {"kind": "employment", **best_emp}
+    if best_edu and best_edu_s >= 0.86:
+        return {"kind": "education", **best_edu}
+    return None
+
+
+def _orcid_search_and_pick(name: str, institution: str, max_results: int = 10) -> Optional[Dict[str, Any]]:
+    urls = _orcid_base_urls(); headers = _orcid_headers()
+    # cache key: strict name + normalized institution
+    key = f"{_normalize_name_for_strict(name)}|{_norm_string(institution)}"
+    if key in _ORCID_CACHE:
+        return _ORCID_CACHE[key]
+    # Build query: name across given/family/other, with optional affiliation filter
+    name = (name or "").strip()
+    parts = name.split()
+    if len(parts) >= 2:
+        given = " ".join(parts[:-1]); family = parts[-1]
+        name_query = f'(given-names:"{given}" AND family-name:"{family}") OR (given-names:"{name}" OR family-name:"{name}" OR other-names:"{name}")'
+    else:
+        name_query = f'(given-names:"{name}" OR family-name:"{name}" OR other-names:"{name}")'
+    if institution:
+        query = f'({name_query}) AND affiliation-org-name:"{institution}"'
+    else:
+        query = name_query
+    try:
+        sess = _orcid_session()
+        r = sess.get(urls["search"], params={"q": query, "rows": max_results}, headers=headers, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        results = data.get("result") or []
+        if not results:
+            _ORCID_CACHE[key] = None
+            return None
+        # Fetch details for candidates and apply strict name check then institution match
+        def fetch_details(orcid_id: str) -> Optional[Dict[str, Any]]:
+            base = urls["base"]
+            # person
+            p = sess.get(f"{base}/{orcid_id}/person", headers=headers, timeout=10)
+            person = p.json() if p.status_code == 200 else {}
+            # employments
+            e = sess.get(f"{base}/{orcid_id}/employments", headers=headers, timeout=10)
+            emp = e.json() if e.status_code == 200 else {}
+            # educations
+            d = sess.get(f"{base}/{orcid_id}/educations", headers=headers, timeout=10)
+            edu = d.json() if d.status_code == 200 else {}
+            # parse to simple structure compatible with our helper
+            # reuse parsing shape of orcid_api.py
+            def parse_person(pd: Dict[str, Any]) -> Dict[str, Any]:
+                out = {"display_name": "", "given_names": "", "family_name": "", "other_names": []}
+                name_obj = (pd or {}).get("name") or {}
+                if name_obj:
+                    gn = (name_obj.get("given-names") or {}).get("value") if name_obj.get("given-names") else ""
+                    fn = (name_obj.get("family-name") or {}).get("value") if name_obj.get("family-name") else ""
+                    out["given_names"] = gn or ""; out["family_name"] = fn or ""; out["display_name"] = f"{gn} {fn}".strip()
+                ons = []
+                other = (pd or {}).get("other-names") or {}
+                if other.get("other-name"):
+                    for item in other.get("other-name"):
+                        if item and item.get("content"):
+                            ons.append(item.get("content"))
+                out["other_names"] = ons
+                return out
+            def parse_affs(ad: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
+                out: List[Dict[str, Any]] = []
+                for group in (ad or {}).get("affiliation-group", []) or []:
+                    for s in (group or {}).get("summaries", []) or []:
+                        if not s or key not in s:
+                            continue
+                        sd = s[key]
+                        org = (sd or {}).get("organization", {}) or {}
+                        out.append({
+                            "organization": org.get("name", "") or "",
+                            "department": (sd or {}).get("department-name", "") or "",
+                            "role": (sd or {}).get("role-title", "") or "",
+                            "start_date": (sd or {}).get("start-date"),
+                            "end_date": (sd or {}).get("end-date"),
+                        })
+                # format dates
+                for item in out:
+                    item["start_date"] = _orcid_format_date(item["start_date"])
+                    item["end_date"] = _orcid_format_date(item["end_date"])
+                return out
+            def _orcid_format_date(obj: Any) -> str:
+                if not obj:
+                    return ""
+                try:
+                    y = (obj.get("year") or {}).get("value"); m = (obj.get("month") or {}).get("value"); d = (obj.get("day") or {}).get("value")
+                    if y and m and d:
+                        return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
+                    if y and m:
+                        return f"{int(y):04d}-{int(m):02d}"
+                    if y:
+                        return f"{int(y):04d}"
+                except Exception:
+                    return ""
+                return ""
+            info = {"orcid_id": orcid_id}
+            info.update(parse_person(person))
+            info["employments"] = parse_affs(emp, "employment-summary")
+            info["educations"] = parse_affs(edu, "education-summary")
+            return info
+        # Evaluate candidates
+        cand: List[Dict[str, Any]] = []
+        name_norm = _normalize_name_for_strict(name)
+        for r in results:
+            orcid_id = ((r or {}).get("orcid-identifier") or {}).get("path")
+            if not orcid_id:
+                continue
+            try:
+                info = fetch_details(orcid_id)
+            except Exception:
+                continue
+            if not info:
+                continue
+            # Strict name equality check
+            disp = _normalize_name_for_strict(info.get("display_name", ""))
+            gn = _normalize_name_for_strict(info.get("given_names", ""))
+            fn = _normalize_name_for_strict(info.get("family_name", ""))
+            strict_ok = name_norm == disp or name_norm == f"{gn} {fn}".strip()
+            if not strict_ok:
+                continue
+            # Institution match
+            if institution:
+                best = _best_aff_match_for_institution(institution, info)
+                if not best:
+                    continue
+            cand.append(info)
+        picked = cand[0] if cand else None
+        _ORCID_CACHE[key] = picked
+        return picked
+    except Exception:
+        return None
+
+
+async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
+    """Enrich a single paper using ORCID: per author, if ORCID record strictly matches name and
+    the institution matches the paper-extracted affiliation, capture orcid and role/start/end.
+
+    Output merges via accumulator: {"papers": [enriched_paper]} where enriched_paper carries:
+      - orcid_by_author: {author_name -> orcid_id}
+      - orcid_aff_meta: {author_name -> { norm_aff_key -> {role,start_date,end_date} }}
+    """
+    paper = state.get("paper", {})
+    authors = paper.get("authors", []) or []
+    aff_map = paper.get("author_affiliations", []) or []
+    if not authors or not aff_map:
+        return {"papers": [{**paper}]}
+    orcid_by_author: Dict[str, str] = {}
+    orcid_aff_meta: Dict[str, Dict[str, Dict[str, Optional[str]]]] = {}
+
+    # Read-only pre-check: if author already has orcid and all current affiliations already
+    # have role/start/end (any of them) recorded, skip ORCID lookup for that author.
+    author_names = [(item.get("name") or "").strip() for item in aff_map if (item.get("name") or "").strip()]
+    name_to_author_row: Dict[str, Dict[str, Any]] = {}
+    name_to_aff_covered: Dict[str, Dict[str, bool]] = {}
+    try:
+        db_uri = os.getenv("DATABASE_URL")
+        if db_uri and author_names:
+            await DatabaseManager.initialize(db_uri)
+            pool = await DatabaseManager.get_pool()
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    for nm in author_names:
+                        # author basic
+                        await cur.execute("SELECT id, orcid FROM authors WHERE author_name_en = %s LIMIT 1", (nm,))
+                        row = await cur.fetchone()
+                        if row:
+                            name_to_author_row[nm] = {"id": row[0], "orcid": row[1]}
+                        # affiliation coverage map
+                        for item in [x for x in aff_map if (x.get("name") or "").strip() == nm]:
+                            for aff in (item.get("affiliations") or []):
+                                norm_key = (" ".join((aff or "").split()).replace(" ", "").lower())
+                                covered = False
+                                if row:
+                                    await cur.execute(
+                                        """
+                                        SELECT aa.role, aa.start_date, aa.end_date
+                                        FROM author_affiliation aa
+                                        JOIN affiliations f ON f.id = aa.affiliation_id
+                                        WHERE aa.author_id = %s AND REPLACE(LOWER(f.aff_name), ' ', '') = %s
+                                        LIMIT 1
+                                        """,
+                                        (row[0], norm_key),
+                                    )
+                                    meta = await cur.fetchone()
+                                    if meta and (meta[0] is not None or meta[1] is not None or meta[2] is not None):
+                                        covered = True
+                                name_to_aff_covered.setdefault(nm, {})[norm_key] = covered
+    except Exception:
+        # best-effort; if pre-check fails, proceed with ORCID lookups
+        pass
+
+    async def _lookup_author(name: str, affs: List[str]):
+        # Try affiliations in order; each lookup guarded by semaphore
+        # Skip if pre-check shows author has orcid and all current affs covered
+        pre = name_to_author_row.get(name)
+        if pre and (pre.get("orcid") or None):
+            all_cov = True
+            for aff in affs:
+                nk = (" ".join((aff or "").split()).replace(" ", "").lower())
+                if not name_to_aff_covered.get(name, {}).get(nk, False):
+                    all_cov = False
+                    break
+            if all_cov:
+                return None, None
+        for aff in affs:
+            async with _ORCID_SEM:
+                info = await asyncio.to_thread(_orcid_search_and_pick, name, aff, 10)
+            if info:
+                return aff, info
+        return None, None
+
+    tasks = []
+    for item in aff_map:
+        name = (item.get("name") or "").strip()
+        if not name:
+            continue
+        affs = [a for a in (item.get("affiliations") or []) if a]
+        if not affs:
+            continue
+        tasks.append(_lookup_author(name, affs))
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    i = 0
+    for item in aff_map:
+        name = (item.get("name") or "").strip()
+        affs = [a for a in (item.get("affiliations") or []) if a]
+        if not name or not affs:
+            continue
+        r = results[i]; i += 1
+        if isinstance(r, Exception) or not r:
+            continue
+        aff_used, info = r
+        if not info:
+            continue
+        orcid_id = info.get("orcid_id")
+        if orcid_id:
+            orcid_by_author[name] = orcid_id
+        best_aff = _best_aff_match_for_institution(aff_used, info)
+        if best_aff:
+            role = (best_aff.get("role") or "").strip() or None
+            sd = _parse_orcid_date(best_aff.get("start_date") or "")
+            ed = _parse_orcid_date(best_aff.get("end_date") or "")
+            norm_key = (" ".join((aff_used or "").split()).replace(" ", "").lower())
+            orcid_aff_meta.setdefault(name, {})[norm_key] = {"role": role, "start_date": sd, "end_date": ed}
+    enriched = {**paper}
+    if orcid_by_author:
+        enriched["orcid_by_author"] = orcid_by_author
+    if orcid_aff_meta:
+        enriched["orcid_aff_meta"] = orcid_aff_meta
+    return {"papers": [enriched]}
+
+
 def dispatch_affiliations(state: DataProcessingState):
     """Dispatch parallel jobs using Send for each paper in `raw_papers`."""
     raw = state.get("raw_papers", []) or []
     if not raw:
         return []
-    return [Send("process_single_paper", {"paper": p}) for p in raw]
+    jobs = []
+    for p in raw:
+        jobs.append(Send("process_single_paper", {"paper": p}))
+        jobs.append(Send("process_orcid_for_paper", {"paper": p}))
+    return jobs
 
 
 async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> DataProcessingState:
@@ -288,6 +705,10 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
                 await _create_schema_if_not_exists(cur)
+                # Prepare QS mapping and ranking systems once per transaction
+                qs_map = _get_qs_map()
+                qs_names = _get_qs_names()
+                qs_sys_ids = await _ensure_qs_ranking_systems(cur)
 
                 for p in papers:
                     paper_title = p.get("title")
@@ -360,6 +781,16 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                         if not author_id:
                             continue
                         author_name_to_id[name_en] = author_id
+                        # Optional: update authors.orcid if provided by ORCID enrichment
+                        ob = (p.get("orcid_by_author") or {}).get(name_en)
+                        if ob:
+                            try:
+                                await cur.execute(
+                                    "UPDATE authors SET orcid = COALESCE(orcid, %s) WHERE id = %s",
+                                    (ob, author_id),
+                                )
+                            except Exception:
+                                pass
                         await cur.execute(
                             """
                             INSERT INTO author_paper (author_id, paper_id, author_order, is_corresponding)
@@ -410,27 +841,78 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                         for aff_name in item.get("affiliations") or []:
                             if not aff_name:
                                 continue
+                            # normalize: trim, collapse spaces, proper spacing and lower for key
+                            cleaned = " ".join((aff_name or "").split())
+                            norm_key = cleaned.replace(" ", "").lower()
+                            # try find by normalized key via case/space-insensitive matching
                             await cur.execute(
-                                "INSERT INTO affiliations (aff_name) VALUES (%s) ON CONFLICT (aff_name) DO NOTHING RETURNING id",
-                                (aff_name,),
+                                "SELECT id, aff_name FROM affiliations WHERE REPLACE(LOWER(aff_name), ' ', '') = %s LIMIT 1",
+                                (norm_key,),
                             )
                             rowaf = await cur.fetchone()
                             if rowaf and rowaf[0]:
                                 aff_id = rowaf[0]
                             else:
-                                await cur.execute("SELECT id FROM affiliations WHERE aff_name = %s LIMIT 1", (aff_name,))
+                                # insert with cleaned display name, then reselect by normalized key to avoid race
+                                await cur.execute(
+                                    "INSERT INTO affiliations (aff_name) VALUES (%s) ON CONFLICT (aff_name) DO NOTHING RETURNING id",
+                                    (cleaned,),
+                                )
                                 rowaf2 = await cur.fetchone()
-                                if not rowaf2:
-                                    continue
-                                aff_id = rowaf2[0]
+                                if rowaf2 and rowaf2[0]:
+                                    aff_id = rowaf2[0]
+                                else:
+                                    await cur.execute(
+                                        "SELECT id FROM affiliations WHERE REPLACE(LOWER(aff_name), ' ', '') = %s LIMIT 1",
+                                        (norm_key,),
+                                    )
+                                    rowaf3 = await cur.fetchone()
+                                    if not rowaf3:
+                                        continue
+                                    aff_id = rowaf3[0]
+
+                            # Enrich with QS rankings and country if available
+                            await _enrich_affiliation_from_qs(cur, aff_id, cleaned, qs_map, qs_names, qs_sys_ids)
+                            # Upsert author_affiliation: only maintain latest_time; leave role/start_date/end_date as NULL for now
+                            pub_dt = published_date
                             await cur.execute(
                                 """
-                                INSERT INTO author_affiliation (author_id, affiliation_id)
-                                VALUES (%s, %s)
-                                ON CONFLICT (author_id, affiliation_id) DO NOTHING
+                                INSERT INTO author_affiliation (author_id, affiliation_id, latest_time)
+                                VALUES (%s, %s, %s)
+                                ON CONFLICT (author_id, affiliation_id) DO UPDATE SET
+                                  latest_time = GREATEST(COALESCE(author_affiliation.latest_time, EXCLUDED.latest_time), EXCLUDED.latest_time)
                                 """,
-                                (author_id, aff_id),
+                                (author_id, aff_id, pub_dt),
                             )
+                            # If ORCID meta present for this author-affiliation, update role/start/end conservatively
+                            meta = ((p.get("orcid_aff_meta") or {}).get(name) or {}).get(norm_key)
+                            if meta:
+                                role = meta.get("role")
+                                sd = meta.get("start_date"); ed = meta.get("end_date")
+                                if role:
+                                    try:
+                                        await cur.execute(
+                                            "UPDATE author_affiliation SET role = COALESCE(role, %s) WHERE author_id = %s AND affiliation_id = %s",
+                                            (role, author_id, aff_id),
+                                        )
+                                    except Exception:
+                                        pass
+                                if sd:
+                                    try:
+                                        await cur.execute(
+                                            "UPDATE author_affiliation SET start_date = LEAST(COALESCE(start_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
+                                            (sd, sd, author_id, aff_id),
+                                        )
+                                    except Exception:
+                                        pass
+                                if ed:
+                                    try:
+                                        await cur.execute(
+                                            "UPDATE author_affiliation SET end_date = GREATEST(COALESCE(end_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
+                                            (ed, ed, author_id, aff_id),
+                                        )
+                                    except Exception:
+                                        pass
 
         return {"processing_status": "completed", "inserted": inserted, "skipped": skipped}
     except Exception as e:
@@ -533,8 +1015,10 @@ async def _create_schema_if_not_exists(cur) -> None:
             id BIGSERIAL PRIMARY KEY,
             author_id INT,
             affiliation_id INT,
+            role TEXT,
+            start_date DATE,
+            end_date DATE,
             latest_time DATE,
-            work VARCHAR(100),
             UNIQUE (author_id, affiliation_id),
             FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE CASCADE,
             FOREIGN KEY (affiliation_id) REFERENCES affiliations(id) ON DELETE CASCADE
@@ -593,6 +1077,261 @@ async def _create_schema_if_not_exists(cur) -> None:
     )
 
 
+# ---------------------- Helpers: QS rankings enrichment ----------------------
+
+_QS_CACHE_MAP: Optional[Dict[str, Dict[str, Any]]] = None
+_QS_CACHE_NAMES: Optional[List[Dict[str, Any]]] = None
+
+
+def _norm_string(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+_DEPT_PREFIX = re.compile(r"^(department|dept\.?|school|faculty|college|laboratory|laboratories|lab|centre|center|institute|institutes|academy|division|unit)\s+of\s+", re.IGNORECASE)
+_INST_KEYWORDS = re.compile(r"university|institute|college|academy|polytechnic|universit[eé]|universidad|universita", re.IGNORECASE)
+
+
+def _strip_parentheses(s: str) -> str:
+    return re.sub(r"\([^\)]*\)", "", s or "").strip()
+
+
+def _first_segment_before_comma(s: str) -> str:
+    return (s or "").split(",", 1)[0].strip()
+
+
+def _last_segment_after_comma(s: str) -> str:
+    parts = [p.strip() for p in (s or "").split(",") if p and p.strip()]
+    if not parts:
+        return (s or "").strip()
+    return parts[-1]
+
+
+def _strip_dept_prefix(s: str) -> str:
+    return _DEPT_PREFIX.sub("", s or "").strip()
+
+
+def _normalize_aff_variants(name: str) -> List[str]:
+    # build multiple textual candidates aiming to keep the institution tail
+    tail1 = _last_segment_after_comma(name)
+    tail2 = ", ".join([p.strip() for p in (name or "").split(",")[-2:]]) if "," in (name or "") else name
+    candidates = [
+        name,
+        _strip_parentheses(name),
+        _first_segment_before_comma(name),
+        _strip_dept_prefix(name),
+        _strip_dept_prefix(_first_segment_before_comma(name)),
+        _strip_dept_prefix(_strip_parentheses(name)),
+        tail1,
+        _strip_dept_prefix(tail1),
+        tail2,
+    ]
+    # Also include article-stripped forms to handle leading "The ..."
+    candidates += [_strip_articles(c) for c in list(candidates)]
+    norms = []
+    for c in candidates:
+        # prefer tail segments that actually look like institutions
+        if c in (tail1, _strip_dept_prefix(tail1), tail2):
+            if not _INST_KEYWORDS.search(c):
+                # skip tails without institution-like keywords to avoid false positives
+                continue
+        n = _norm_string(c)
+        if n and n not in norms:
+            norms.append(n)
+    return norms
+ 
+
+def _strip_articles(s: str) -> str:
+    # Remove leading English articles
+    return re.sub(r"^(\s*(the|a|an)\s+)", "", (s or ""), flags=re.IGNORECASE).strip()
+
+
+def _build_acronym(s: str) -> str:
+    # Build acronym from words, skipping small connectors but keeping key tokens like University
+    tokens = re.split(r"[^A-Za-z]+", s or "")
+    skip = {"of", "and", "for", "at", "in", "on"}
+    letters = [t[0] for t in tokens if t and t.lower() not in skip]
+    return ("".join(letters)).lower()
+
+
+def _project_root() -> str:
+    # src/agent/data_graph.py → up two levels to project root
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def _qs_csv_path() -> str:
+    # docs/qs-world-rankings-2025.csv located at project root /docs
+    return os.path.join(_project_root(), "docs", "qs-world-rankings-2025.csv")
+
+
+def _load_qs_rankings() -> tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]:
+    path = _qs_csv_path()
+    mapping: Dict[str, Dict[str, Any]] = {}
+    names: List[Dict[str, Any]] = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            # helper to resolve headers even with NBSP/spacing/case differences
+            def _norm_header(s: str) -> str:
+                txt = (s or "")
+                # remove BOM and zero-width characters
+                txt = txt.replace("\ufeff", "").replace("\u200b", "")
+                # normalize spaces and case
+                txt = txt.replace("\xa0", " ")
+                txt = re.sub(r"\s+", " ", txt).strip().lower()
+                return txt
+            header_map = { _norm_header(h): h for h in (reader.fieldnames or []) }
+            def _get(row: dict, keys: List[str]) -> str:
+                for k in keys:
+                    hk = header_map.get(_norm_header(k))
+                    if hk in row:
+                        return (row.get(hk) or "").strip()
+                # last try: iterate row keys
+                for rk in row.keys():
+                    if _norm_header(rk) in [_norm_header(k) for k in keys]:
+                        return (row.get(rk) or "").strip()
+                return ""
+            for row in reader:
+                inst = _get(row, ["Institution Name", "institution", "name"]) 
+                if not inst:
+                    continue
+                # base record
+                country = _get(row, ["Location Full", "Location", "Country"]) 
+                r2025 = _get(row, ["2025 Rank", "Rank 2025", "2025"]) 
+                r2024 = _get(row, ["2024 Rank", "Rank 2024", "2024"]) 
+                rec = {"name": inst, "country": country, "r2025": r2025, "r2024": r2024}
+                # build multiple normalized keys for better coverage
+                keys = _normalize_aff_variants(inst)
+                # add parenthetical aliases as additional variants (e.g., "UNSW Sydney")
+                try:
+                    pars = re.findall(r"\(([^)]*)\)", inst)
+                    for txt in pars:
+                        for k in _normalize_aff_variants(txt):
+                            if k not in keys:
+                                keys.append(k)
+                except Exception:
+                    pass
+                # add acronym variant (e.g., "UNSW")
+                acr = _build_acronym(inst)
+                if acr and acr not in keys:
+                    keys.append(acr)
+                for k in keys:
+                    mapping.setdefault(k, rec)
+                # store for fuzzy fallback with its normalized variants
+                names.append({"name": inst, "rec": rec, "norms": keys})
+    except Exception:
+        # If CSV missing or unreadable, keep empty mapping to avoid breaking pipeline
+        mapping = {}
+        names = []
+    return mapping, names
+
+
+def _get_qs_map() -> Dict[str, Dict[str, Any]]:
+    global _QS_CACHE_MAP, _QS_CACHE_NAMES
+    if _QS_CACHE_MAP is None:
+        _QS_CACHE_MAP, _QS_CACHE_NAMES = _load_qs_rankings()
+    return _QS_CACHE_MAP or {}
+
+
+def _get_qs_names() -> List[Dict[str, Any]]:
+    global _QS_CACHE_MAP, _QS_CACHE_NAMES
+    if _QS_CACHE_NAMES is None:
+        _QS_CACHE_MAP, _QS_CACHE_NAMES = _load_qs_rankings()
+    return _QS_CACHE_NAMES or []
+
+
+async def _ensure_qs_ranking_systems(cur) -> Dict[int, int]:
+    """Ensure ranking systems for QS 2025 and QS 2024 exist; return {year: id}."""
+    systems = {2025: "QS 2025", 2024: "QS 2024"}
+    out: Dict[int, int] = {}
+    for year, name in systems.items():
+        await cur.execute(
+            "INSERT INTO ranking_systems (system_name, update_frequency) VALUES (%s, %s) ON CONFLICT (system_name) DO NOTHING RETURNING id",
+            (name, "annual"),
+        )
+        row = await cur.fetchone()
+        if row and row[0]:
+            out[year] = row[0]
+        else:
+            await cur.execute("SELECT id FROM ranking_systems WHERE system_name = %s LIMIT 1", (name,))
+            row2 = await cur.fetchone()
+            if row2:
+                out[year] = row2[0]
+    return out
+
+
+def _find_qs_record_for_aff(name: str, qs_map: Dict[str, Dict[str, Any]], qs_names: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    # 1) try multiple normalized variants exact hit
+    for k in _normalize_aff_variants(name):
+        rec = qs_map.get(k)
+        if rec:
+            return rec
+    # 1b) try acronym exact hit
+    ak = _build_acronym(name)
+    if ak:
+        rec2 = qs_map.get(ak)
+        if rec2:
+            return rec2
+    # 2) fallback: fuzzy on normalized strings
+    try:
+        import difflib
+        # consider multiple target variants including suffix after first comma (e.g., "UNSW, Sydney" → "unswsydney")
+        targets = set(_normalize_aff_variants(name))
+        after = ",".join([p.strip() for p in (name or "").split(",")[1:]])
+        if after:
+            tnorm = _norm_string(after)
+            if tnorm:
+                targets.add(tnorm)
+        if ak:
+            targets.add(ak)
+        if not targets:
+            return None
+        best = None; best_score = 0.0
+        for item in qs_names:
+            norms = item.get("norms", []) or []
+            for t in targets:
+                for k in norms:
+                    score = difflib.SequenceMatcher(None, t, k).ratio()
+                    if score > best_score:
+                        best_score = score; best = item.get("rec")
+        # accept only sufficiently close match
+        if best and best_score >= 0.84:
+            return best
+    except Exception:
+        return None
+    return None
+
+
+async def _enrich_affiliation_from_qs(cur, aff_id: int, display_name: str, qs_map: Dict[str, Dict[str, Any]], qs_names: List[Dict[str, Any]], sys_ids: Dict[int, int]) -> None:
+    rec = _find_qs_record_for_aff(display_name, qs_map, qs_names)
+    if not rec:
+        return
+    country = (rec.get("country") or "").strip()
+    if country:
+        # only fill if NULL or empty
+        await cur.execute(
+            "UPDATE affiliations SET country = COALESCE(NULLIF(country, ''), %s) WHERE id = %s",
+            (country, aff_id),
+        )
+    if rec.get("r2025") and sys_ids.get(2025):
+        await cur.execute(
+            """
+            INSERT INTO affiliation_rankings (aff_id, rank_system_id, rank_value, rank_year)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (aff_id, rank_system_id, rank_year) DO NOTHING
+            """,
+            (aff_id, sys_ids[2025], str(rec["r2025"]).strip(), 2025),
+        )
+    if rec.get("r2024") and sys_ids.get(2024):
+        await cur.execute(
+            """
+            INSERT INTO affiliation_rankings (aff_id, rank_system_id, rank_value, rank_year)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (aff_id, rank_system_id, rank_year) DO NOTHING
+            """,
+            (aff_id, sys_ids[2024], str(rec["r2024"]).strip(), 2024),
+        )
+
+
 # ---------------------- Graph ----------------------
 
 def _route(state: DataProcessingState) -> str:
@@ -608,6 +1347,7 @@ builder = StateGraph(DataProcessingState)
 builder.add_node("fetch_arxiv_today", fetch_arxiv_today)
 builder.add_node("process_single_paper", process_single_paper)
 builder.add_node("upsert_papers", upsert_papers)
+builder.add_node("process_orcid_for_paper", process_orcid_for_paper)
 
 builder.add_edge(START, "fetch_arxiv_today")
 # Use conditional edges with Send for parallel map from fetch node
@@ -619,6 +1359,7 @@ builder.add_conditional_edges(
 builder.add_edge("fetch_arxiv_today", "upsert_papers")
 # Also connect the Send target to the join so execution waits for all workers
 builder.add_edge("process_single_paper", "upsert_papers")
+builder.add_edge("process_orcid_for_paper", "upsert_papers")
 
 builder.add_edge("upsert_papers", END)
 

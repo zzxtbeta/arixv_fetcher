@@ -2,11 +2,20 @@
 
 from typing import Dict, Any, List, Set, Optional
 from datetime import datetime, timedelta, timezone, date
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from src.db.supabase_client import supabase_client
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+def _gen_thread_id(prefix: str) -> str:
+    try:
+        import time, secrets
+        return f"{prefix}-{int(time.time()*1000)}-{secrets.token_hex(4)}"
+    except Exception:
+        from datetime import datetime
+        return f"{prefix}-{datetime.utcnow().timestamp()}"
 
 
 def _to_date(value: Any) -> Optional[date]:
@@ -42,6 +51,39 @@ async def overview_stats() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"overview failed: {e}")
 
 
+@router.post("/fetch-arxiv-by-id")
+async def trigger_fetch_by_id(request: Request, ids: str = Query(..., description="Comma-separated arXiv IDs"), thread_id: Optional[str] = None) -> Dict[str, Any]:
+    """Trigger data ingestion by explicit arXiv IDs using the same LangGraph flow."""
+    try:
+        id_list = [s.strip() for s in (ids or "").split(",") if s.strip()]
+        if not id_list:
+            raise HTTPException(status_code=400, detail="ids is required (comma-separated)")
+        graph = request.app.state.data_processing_graph
+        config = {"configurable": {"thread_id": thread_id or _gen_thread_id("dashboard-arxiv-by-id"), "id_list": id_list}}
+        result = await graph.ainvoke({}, config=config)
+        status = result.get("processing_status")
+        if status == "completed":
+            return {
+                "status": "success",
+                "inserted": result.get("inserted", 0),
+                "skipped": result.get("skipped", 0),
+                "fetched": result.get("fetched", 0),
+            }
+        if status == "error":
+            raise HTTPException(status_code=500, detail=result.get("error_message", "unknown error"))
+        return {
+            "status": "ok",
+            "message": f"graph finished with status={status}",
+            "inserted": result.get("inserted", 0),
+            "skipped": result.get("skipped", 0),
+            "fetched": result.get("fetched", 0),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"fetch by id failed: {e}")
+
+
 def _normalize_name(s: str) -> str:
     return "".join(ch for ch in s.lower() if not ch.isspace())
 
@@ -56,16 +98,35 @@ async def author_search(q: str = Query(..., description="Fuzzy author name")) ->
     - Top collaborators (co-authors by frequency)
     """
     try:
-        pattern = f"%{_normalize_name(q)}%"
-        # Fetch candidate authors via ilike on author_name_en directly
+        norm_q = _normalize_name(q)
+        # Primary: ilike by original input (fast path)
         candidates = supabase_client.select_ilike(
             table="authors",
             column="author_name_en",
             pattern=f"%{q}%",
-            columns="id, author_name_en",
+            columns="id, author_name_en, orcid",
             order_by=("id", True),
-            limit=20,
-        )
+            limit=100,
+        ) or []
+        # Secondary: handle inputs like "jiankeyu" vs "Jianke Yu" by space-insensitive matching
+        # Fetch a wider batch and locally filter by normalized contains
+        extra_pool = supabase_client.select(
+            table="authors",
+            columns="id, author_name_en, orcid",
+            order_by=("id", True),
+            limit=1000,
+        ) or []
+        if extra_pool:
+            extra_filtered = [a for a in extra_pool if norm_q in _normalize_name(a.get("author_name_en") or "")]
+        else:
+            extra_filtered = []
+        # Merge and de-duplicate by id
+        by_id = {}
+        for a in candidates + extra_filtered:
+            aid = a.get("id")
+            if aid and aid not in by_id:
+                by_id[aid] = a
+        candidates = list(by_id.values())[:100]
         if not candidates:
             return {"query": q, "results": []}
 
@@ -73,6 +134,7 @@ async def author_search(q: str = Query(..., description="Fuzzy author name")) ->
         for a in candidates:
             author_id = a.get("id")
             name = a.get("author_name_en")
+            orcid = a.get("orcid")
             if not author_id:
                 continue
             # Author's papers via author_paper
@@ -91,10 +153,39 @@ async def author_search(q: str = Query(..., description="Fuzzy author name")) ->
                 )
             # Affiliations
             affs = []
-            aff_links = supabase_client.select("author_affiliation", filters={"author_id": author_id}, columns="affiliation_id")
+            aff_links = supabase_client.select("author_affiliation", filters={"author_id": author_id}, columns="affiliation_id, role, start_date, end_date, latest_time")
             aff_ids = [r.get("affiliation_id") for r in aff_links if r.get("affiliation_id")]
             if aff_ids:
-                affs = supabase_client.select_in("affiliations", "id", aff_ids, columns="id, aff_name")
+                affs = supabase_client.select_in("affiliations", "id", aff_ids, columns="id, aff_name, country")
+                # attach role/start/end/latest_time from link rows
+                meta = {r.get("affiliation_id"): {"role": r.get("role"), "start_date": r.get("start_date"), "end_date": r.get("end_date"), "latest_time": r.get("latest_time")} for r in (aff_links or [])}
+                for arow in affs or []:
+                    fid = arow.get("id")
+                    if fid in meta:
+                        arow.update(meta[fid])
+                # QS ranks enrichment for this author's affiliations
+                rs = supabase_client.select_in("ranking_systems", "system_name", ["QS 2025", "QS 2024"], columns="id, system_name")
+                sys_by_name = {r.get("system_name"): r.get("id") for r in rs}
+                ar = supabase_client.select_in(
+                    "affiliation_rankings",
+                    "aff_id",
+                    aff_ids,
+                    columns="aff_id, rank_system_id, rank_value, rank_year",
+                )
+                from collections import defaultdict
+                aff_to_qs = defaultdict(dict)
+                for row in ar or []:
+                    fid = row.get("aff_id"); sid = row.get("rank_system_id"); val = row.get("rank_value"); yr = row.get("rank_year")
+                    if not fid or not sid:
+                        continue
+                    if sid == sys_by_name.get("QS 2025") or (yr == 2025):
+                        aff_to_qs[fid]["y2025"] = val
+                    if sid == sys_by_name.get("QS 2024") or (yr == 2024):
+                        aff_to_qs[fid]["y2024"] = val
+                for arow in affs:
+                    fid = arow.get("id")
+                    if fid in aff_to_qs:
+                        arow["qs"] = aff_to_qs[fid]
             # Collaborators
             coll_counts: Dict[int, int] = {}
             if paper_ids:
@@ -117,7 +208,7 @@ async def author_search(q: str = Query(..., description="Fuzzy author name")) ->
 
             results.append(
                 {
-                    "author": {"id": author_id, "name": name},
+                    "author": {"id": author_id, "name": name, "orcid": orcid},
                     "affiliations": affs,
                     "recent_papers": recent,
                     "top_collaborators": top_collaborators,
