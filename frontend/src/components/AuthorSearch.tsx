@@ -2,6 +2,7 @@ import { Card, Input, List, Tag, Typography, Space, message } from 'antd'
 import { useState } from 'react'
 import { searchAuthor } from '../api'
 import { ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons'
+import { CalendarOutlined } from '@ant-design/icons'
 
 export default function AuthorSearch() {
   const [loading, setLoading] = useState(false)
@@ -11,6 +12,20 @@ export default function AuthorSearch() {
     if (!v) return null
     const m = String(v).match(/\d+/)
     return m ? Number(m[0]) : null
+  }
+
+  function formatDate(d?: string | null): string {
+    if (!d) return ''
+    const s = String(d)
+    if (s.length >= 7) return s.slice(0, 7)
+    if (s.length >= 4) return s.slice(0, 4)
+    return s
+  }
+
+  function formatRange(start?: string | null, end?: string | null): string {
+    const sd = formatDate(start) || '?'
+    const ed = formatDate(end) || 'present'
+    return `${sd} — ${ed}`
   }
 
   async function onSearch(v: string) {
@@ -62,17 +77,26 @@ export default function AuthorSearch() {
                       <Card key={a.id} size="small" style={{ borderRadius: 8 }}>
                         <Space direction="vertical" size={4}>
                           <Typography.Text strong>{a.aff_name}</Typography.Text>
-                          {(a.role || a.start_date || a.end_date || a.latest_time) ? (
-                            <Typography.Text type="secondary">
-                              {a.role ? `${a.role}` : '—'}
-                              {(a.start_date || a.end_date) ? ` · ${a.start_date || '?'} — ${a.end_date || 'present'}` : ''}
-                              {a.latest_time ? ` · latest: ${a.latest_time}` : ''}
-                            </Typography.Text>
+                          {/* line 1: role */}
+                          {a.role ? (
+                            <Space wrap size={6}>
+                              <Tag color="magenta">{a.role}</Tag>
+                            </Space>
                           ) : null}
+                          {/* line 2: dates (range + latest) */}
+                          {(a.start_date || a.end_date || a.latest_time) ? (
+                            <Space wrap size={6}>
+                              {(a.start_date || a.end_date) ? (
+                                <Tag icon={<CalendarOutlined />}>{formatRange(a.start_date, a.end_date)}</Tag>
+                              ) : null}
+                              {a.latest_time ? <Tag>latest: {formatDate(a.latest_time)}</Tag> : null}
+                            </Space>
+                          ) : null}
+                          {/* line 3: QS ranks with trend arrow placed before qs25 */}
                           {a?.qs?.y2025 || a?.qs?.y2024 ? (
                             <Space size={6} align="center">
-                              <Tag color="geekblue">qs25: {a.qs?.y2025}</Tag>
                               {arrow}
+                              <Tag color="geekblue">qs25: {a.qs?.y2025}</Tag>
                               <Tag>qs24: {a.qs?.y2024}</Tag>
                             </Space>
                           ) : null}
@@ -86,7 +110,7 @@ export default function AuthorSearch() {
                   {(it.recent_papers || []).map((p: any) => (
                     <li key={p.id}>
                       <a href={`https://arxiv.org/abs/${p.arxiv_entry}`} target="_blank" rel="noreferrer">{p.paper_title}</a>
-                      {p.published ? <Typography.Text type="secondary"> — {p.published}</Typography.Text> : null}
+                      {p.published ? <Typography.Text type="secondary"> — {formatDate(p.published)}</Typography.Text> : null}
                     </li>
                   ))}
                 </ul>

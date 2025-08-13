@@ -265,61 +265,6 @@ async def enrich_affiliations_qs_api(request: Request, force_country: bool = Fal
 
 # ---------------- Temporary backfill endpoint: latest_time for author_affiliation ----------------
 
-@router.post("/backfill-author-affiliation-latest-time")
-async def backfill_author_affiliation_latest_time(request: Request) -> dict:
-    """Backfill author_affiliation.latest_time by scanning existing papers.
-
-    Logic: latest_time(author_id, affiliation_id) = max(p.published) where
-    (author_id) is linked to paper via author_paper and author has the affiliation.
-    Safe to run multiple times; uses MAX aggregation.
-    """
-    try:
-        import os
-        from src.db.database import DatabaseManager
-
-        db_uri = os.getenv("DATABASE_URL")
-        if not db_uri:
-            raise HTTPException(status_code=500, detail="DATABASE_URL not set")
-
-        await DatabaseManager.initialize(db_uri)
-        pool = await DatabaseManager.get_pool()
-
-        updated = 0
-        async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                # Compute max published per (author_id, affiliation_id)
-                await cur.execute(
-                    """
-                    WITH ap AS (
-                        SELECT author_id, paper_id FROM author_paper
-                    ),
-                    pa AS (
-                        SELECT ap.author_id, a.affiliation_id, p.published
-                        FROM ap
-                        JOIN papers p ON p.id = ap.paper_id
-                        JOIN author_affiliation a ON a.author_id = ap.author_id
-                        WHERE p.published IS NOT NULL
-                    ),
-                    agg AS (
-                        SELECT author_id, affiliation_id, MAX(published) AS max_pub
-                        FROM pa GROUP BY author_id, affiliation_id
-                    )
-                    UPDATE author_affiliation aa
-                    SET latest_time = GREATEST(COALESCE(aa.latest_time, agg.max_pub), agg.max_pub)
-                    FROM agg
-                    WHERE aa.author_id = agg.author_id AND aa.affiliation_id = agg.affiliation_id
-                    """
-                )
-                # Roughly count rows affected
-                await cur.execute("SELECT COUNT(*) FROM author_affiliation WHERE latest_time IS NOT NULL")
-                row = await cur.fetchone()
-                updated = int(row[0]) if row and row[0] is not None else 0
-        logger.info(f"Backfill latest_time done: updated_rows={updated}")
-        return {"status": "success", "updated_rows": updated}
-    except Exception as e:
-        logger.error(f"Error in backfill_author_affiliation_latest_time: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}") 
-
 
 # ---------------- Temporary ORCID enrichment endpoint for existing data ----------------
 
@@ -365,7 +310,20 @@ async def enrich_orcid_api(
                 best = _best_aff_match_for_institution(aff_name, info)
                 if not best:
                     return None
-                role = (best.get("role") or "").strip() or None
+                    
+                # Combine role and department for complete role information
+                role_title = (best.get("role") or "").strip()
+                department = (best.get("department") or "").strip()
+                
+                # Only store actual roles, not department names as roles
+                if role_title and department:
+                    role = f"{role_title} ({department})"
+                elif role_title:
+                    role = role_title
+                else:
+                    # Don't use department as role if no actual role exists
+                    role = None
+                    
                 sd = _parse_orcid_date(best.get("start_date") or "")
                 ed = _parse_orcid_date(best.get("end_date") or "")
                 return {"orcid": info.get("orcid_id"), "role": role, "start_date": sd, "end_date": ed}
@@ -432,33 +390,67 @@ async def enrich_orcid_api(
                         # role/start/end
                         if res.get("role"):
                             try:
-                                await cur.execute(
-                                    "UPDATE author_affiliation SET role = COALESCE(role, %s) WHERE author_id = %s AND affiliation_id = %s",
-                                    (res["role"], author_id, aff_id),
-                                )
-                                if not role0:
+                                if only_missing:
+                                    # Only update if current value is NULL
+                                    await cur.execute(
+                                        "UPDATE author_affiliation SET role = COALESCE(role, %s) WHERE author_id = %s AND affiliation_id = %s",
+                                        (res["role"], author_id, aff_id),
+                                    )
+                                    # Count only if originally NULL
+                                    if not role0:
+                                        role_updated += 1
+                                else:
+                                    # Direct overwrite
+                                    await cur.execute(
+                                        "UPDATE author_affiliation SET role = %s WHERE author_id = %s AND affiliation_id = %s",
+                                        (res["role"], author_id, aff_id),
+                                    )
+                                    # Count all updates in overwrite mode
                                     role_updated += 1
                             except Exception:
                                 pass
                         if res.get("start_date"):
                             try:
-                                await cur.execute(
-                                    "UPDATE author_affiliation SET start_date = LEAST(COALESCE(start_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
-                                    (res["start_date"], res["start_date"], author_id, aff_id),
-                                )
-                                if not sd0:
+                                if only_missing:
+                                    # Use LEAST to keep the earliest date, only update if NULL
+                                    await cur.execute(
+                                        "UPDATE author_affiliation SET start_date = LEAST(COALESCE(start_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
+                                        (res["start_date"], res["start_date"], author_id, aff_id),
+                                    )
+                                    # Count only if originally NULL
+                                    if not sd0:
+                                        start_updated += 1
+                                else:
+                                    # Direct overwrite with earliest date
+                                    await cur.execute(
+                                        "UPDATE author_affiliation SET start_date = LEAST(COALESCE(start_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
+                                        (res["start_date"], res["start_date"], author_id, aff_id),
+                                    )
+                                    # Count all updates in overwrite mode
                                     start_updated += 1
                             except Exception:
                                 pass
                         if res.get("end_date"):
                             try:
-                                await cur.execute(
-                                    "UPDATE author_affiliation SET end_date = GREATEST(COALESCE(end_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
-                                    (res["end_date"], res["end_date"], author_id, aff_id),
-                                )
-                                if not ed0:
+                                if only_missing:
+                                    # Use GREATEST to keep the latest date, only update if NULL
+                                    await cur.execute(
+                                        "UPDATE author_affiliation SET end_date = GREATEST(COALESCE(end_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
+                                        (res["end_date"], res["end_date"], author_id, aff_id),
+                                    )
+                                    # Count only if originally NULL
+                                    if not ed0:
+                                        end_updated += 1
+                                else:
+                                    # Direct overwrite with latest date
+                                    await cur.execute(
+                                        "UPDATE author_affiliation SET end_date = GREATEST(COALESCE(end_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
+                                        (res["end_date"], res["end_date"], author_id, aff_id),
+                                    )
+                                    # Count all updates in overwrite mode
                                     end_updated += 1
                             except Exception:
+                                pass
                                 pass
                         processed += 1
                         if processed >= max_rows:
@@ -480,4 +472,132 @@ async def enrich_orcid_api(
         raise
     except Exception as e:
         logger.error(f"Error in enrich_orcid_api: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/enrich-orcid-author")
+async def enrich_orcid_for_author(request: Request, author_id: int, overwrite: bool = False) -> dict:
+    """Enrich a single author's ORCID by author_id.
+    
+    Args:
+        author_id: The ID of the author to enrich
+        overwrite: If True, overwrite existing role data; if False, only update NULL values
+        
+    Process:
+    - Fetch author's name and known affiliations from DB
+    - Search ORCID candidates with strict name match
+    - For each affiliation, find best ORCID employment/education match
+    - Update author.orcid and author_affiliation.role/start_date/end_date
+    """
+    from src.db.database import DatabaseManager
+    from src.agent.data_graph import _orcid_search_and_pick, _best_aff_match_for_institution, _parse_orcid_date
+    import os
+    
+    try:
+        db_uri = os.getenv("DATABASE_URL")
+        await DatabaseManager.initialize(db_uri)
+        pool = await DatabaseManager.get_pool()
+        
+        total_updated = 0
+        orcid_updated = False
+        
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # Get author info
+                await cur.execute(
+                    "SELECT author_name_en, orcid FROM authors WHERE id = %s",
+                    (author_id,)
+                )
+                author_row = await cur.fetchone()
+                if not author_row:
+                    raise HTTPException(status_code=404, detail=f"Author {author_id} not found")
+                
+                author_name, current_orcid = author_row
+                
+                # Get author's affiliations
+                await cur.execute(
+                    """
+                    SELECT aa.affiliation_id, a.aff_name, aa.role, aa.start_date, aa.end_date
+                    FROM author_affiliation aa 
+                    JOIN affiliations a ON aa.affiliation_id = a.id 
+                    WHERE aa.author_id = %s
+                    """,
+                    (author_id,)
+                )
+                aff_rows = await cur.fetchall()
+                
+                # Process each affiliation
+                for aff_id, aff_name, current_role, current_start, current_end in aff_rows:
+                    # Search ORCID
+                    info = _orcid_search_and_pick(author_name, aff_name, 10)
+                    if not info:
+                        continue
+                    
+                    # Update author ORCID if found and not already set
+                    orcid_id = info.get("orcid_id")
+                    if orcid_id and not current_orcid:
+                        await cur.execute(
+                            "UPDATE authors SET orcid = %s WHERE id = %s",
+                            (orcid_id, author_id)
+                        )
+                        orcid_updated = True
+                        current_orcid = orcid_id
+                    
+                    # Find best affiliation match
+                    best = _best_aff_match_for_institution(aff_name, info)
+                    if not best:
+                        continue
+                    
+                    # Combine role and department for complete role information
+                    role_title = (best.get("role") or "").strip()
+                    department = (best.get("department") or "").strip()
+                    
+                    # Only store actual roles, not department names as roles
+                    if role_title and department:
+                        new_role = f"{role_title} ({department})"
+                    elif role_title:
+                        new_role = role_title
+                    else:
+                        # Don't use department as role if no actual role exists
+                        new_role = None
+                    
+                    new_start = _parse_orcid_date(best.get("start_date") or "")
+                    new_end = _parse_orcid_date(best.get("end_date") or "")
+                    
+                    # Update affiliation data
+                    updates = []
+                    params = []
+                    
+                    if new_role and (overwrite or not current_role):
+                        updates.append("role = %s")
+                        params.append(new_role)
+                    
+                    if new_start and (overwrite or not current_start):
+                        updates.append("start_date = %s")
+                        params.append(new_start)
+                    
+                    if new_end and (overwrite or not current_end):
+                        updates.append("end_date = %s") 
+                        params.append(new_end)
+                    
+                    if updates:
+                        query = f"UPDATE author_affiliation SET {', '.join(updates)} WHERE author_id = %s AND affiliation_id = %s"
+                        params.extend([author_id, aff_id])
+                        await cur.execute(query, params)
+                        total_updated += 1
+        
+        return {
+            "status": "success",
+            "author_id": author_id,
+            "author_name": author_name,
+            "orcid_updated": orcid_updated,
+            "current_orcid": current_orcid,
+            "affiliations_updated": total_updated,
+            "overwrite_mode": overwrite
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in enrich_orcid_for_author: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}") 

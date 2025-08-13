@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone, date
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from src.db.supabase_client import supabase_client
+from src.agent.data_graph import _orcid_search_and_pick, _best_aff_match_for_institution, _parse_orcid_date
+from src.agent.data_graph import _orcid_candidates_by_name
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 

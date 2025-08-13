@@ -32,6 +32,17 @@ logger = logging.getLogger(__name__)
 ARXIV_QUERY_API = "https://export.arxiv.org/api/query"
 HTTP_HEADERS = {"User-Agent": "arxiv-scraper/0.1 (+https://example.com)"}
 
+def _log_json_sample(tag: str, obj: Any, limit: int = 2000) -> None:
+    # Disabled verbose JSON logging to reduce noise
+    pass
+
+def _log_orcid_candidate(info: Dict[str, Any], matched: bool) -> None:
+    # Simplified logging - only log matched candidates
+    if matched:
+        oid = info.get("orcid_id")
+        disp = info.get("display_name")
+        logger.info(f"ORCID candidate matched: {oid} ({disp})")
+
 # Bounded concurrency for Send tasks to avoid PDF/LLM rate limits
 _AFF_MAX = int(os.getenv("AFFILIATION_MAX_CONCURRENCY", "5"))
 _AFF_SEM = asyncio.Semaphore(_AFF_MAX)
@@ -40,6 +51,7 @@ _ORCID_MAX = int(os.getenv("ORCID_MAX_CONCURRENCY", "5"))
 _ORCID_SEM = asyncio.Semaphore(_ORCID_MAX)
 _ORCID_CACHE: Dict[str, Optional[Dict[str, Any]]] = {}
 _ORCID_SESSION = None
+_ORCID_CANDIDATES_CACHE: Dict[str, List[Dict[str, Any]]] = {}
 
 # Reusable HTTP session for arXiv PDF downloads
 _PDF_SESSION = None
@@ -376,18 +388,41 @@ def _normalize_name_for_strict(s: str) -> str:
     return " ".join((s or "").lower().split())
 
 
+def _name_tokens(s: str) -> List[str]:
+    txt = (s or "").lower()
+    # split by non-alphanumerics and remove empties
+    import re as _re
+    return [t for t in _re.split(r"[^a-z0-9]+", txt) if t]
+
+
 def _parse_orcid_date(d: str) -> Optional[str]:
-    # ORCID may return YYYY or YYYY-MM; coerce to YYYY-MM-DD by picking first day
+    # ORCID may return dict {year, month, day} or strings like YYYY / YYYY-MM / YYYY-MM-DD
     if not d:
         return None
-    txt = d.strip()
-    if len(txt) == 4 and txt.isdigit():
-        return f"{txt}-01-01"
-    if len(txt) == 7 and txt[4] == '-':
-        return f"{txt}-01"
-    if len(txt) >= 10:
-        return txt[:10]
-    return None
+    try:
+        # dict shape
+        if isinstance(d, dict):
+            y = (d.get("year") or {}).get("value") if isinstance(d.get("year"), dict) else d.get("year")
+            m = (d.get("month") or {}).get("value") if isinstance(d.get("month"), dict) else d.get("month")
+            day = (d.get("day") or {}).get("value") if isinstance(d.get("day"), dict) else d.get("day")
+            if y and m and day:
+                return f"{int(y):04d}-{int(m):02d}-{int(day):02d}"
+            if y and m:
+                return f"{int(y):04d}-{int(m):02d}"
+            if y:
+                return f"{int(y):04d}"
+            return None
+        # string shape
+        txt = str(d).strip()
+        if len(txt) == 4 and txt.isdigit():
+            return f"{txt}-01-01"
+        if len(txt) == 7 and txt[4] == '-':
+            return f"{txt}-01"
+        if len(txt) >= 10:
+            return txt[:10]
+        return None
+    except Exception:
+        return None
 
 
 def _best_aff_match_for_institution(aff_name: str, scholar: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -417,7 +452,7 @@ def _best_aff_match_for_institution(aff_name: str, scholar: Dict[str, Any]) -> O
         s = score_one(e.get("organization", ""), e.get("department", ""))
         if s > best_edu_s:
             best_edu_s = s; best_edu = e
-    # Require reasonably high similarity; prefer employment
+    # Return best match if it meets threshold
     if best_emp and best_emp_s >= 0.86:
         return {"kind": "employment", **best_emp}
     if best_edu and best_edu_s >= 0.86:
@@ -553,6 +588,217 @@ def _orcid_search_and_pick(name: str, institution: str, max_results: int = 10) -
         return None
 
 
+def _orcid_candidates_by_name(name: str, max_candidates: int = 5) -> List[Dict[str, Any]]:
+    """Return up to N ORCID candidate profiles that strictly match the author's name.
+
+    Strict match rules:
+    - display_name equals name (normalized) OR
+    - given_names + family_name equals name (normalized)
+    """
+    key = f"cands|{_normalize_name_for_strict(name)}|{max_candidates}"
+    if key in _ORCID_CANDIDATES_CACHE:
+        return _ORCID_CANDIDATES_CACHE[key]
+    urls = _orcid_base_urls(); headers = _orcid_headers(); sess = _orcid_session()
+    # name-only search to gather a small pool
+    name = (name or "").strip()
+    parts = name.split()
+    if len(parts) >= 2:
+        given = " ".join(parts[:-1]); family = parts[-1]
+        name_query = f'(given-names:"{given}" AND family-name:"{family}") OR (given-names:"{name}" OR family-name:"{name}" OR other-names:"{name}")'
+    else:
+        name_query = f'(given-names:"{name}" OR family-name:"{name}" OR other-names:"{name}")'
+    try:
+        # fetch a wider pool to avoid missing exact match due to ranking
+        r = sess.get(urls["search"], params={"q": name_query, "rows": 100}, headers=headers, timeout=15)
+        r.raise_for_status()
+        data = r.json(); results = data.get("result") or []
+        # log raw classic search results (truncated)
+        _log_json_sample("search", results[:10])
+        out: List[Dict[str, Any]] = []
+        for row in results:
+            if len(out) >= max_candidates:
+                break
+            orcid_id = ((row or {}).get("orcid-identifier") or {}).get("path")
+            if not orcid_id:
+                continue
+            # fetch details
+            try:
+                base = urls["base"]
+                p = sess.get(f"{base}/{orcid_id}/person", headers=headers, timeout=10)
+                person = p.json() if p.status_code == 200 else {}
+                e = sess.get(f"{base}/{orcid_id}/employments", headers=headers, timeout=10)
+                emp = e.json() if e.status_code == 200 else {}
+                d = sess.get(f"{base}/{orcid_id}/educations", headers=headers, timeout=10)
+                edu = d.json() if d.status_code == 200 else {}
+            except Exception as ex:
+                logger.warning(f"ORCID fetch failed for {orcid_id}: {ex}")
+                continue
+            # parse
+            def parse_person(pd: Dict[str, Any]) -> Dict[str, Any]:
+                outp = {"display_name": "", "given_names": "", "family_name": "", "other_names": []}
+                name_obj = (pd or {}).get("name") or {}
+                if name_obj:
+                    gn = (name_obj.get("given-names") or {}).get("value") if name_obj.get("given-names") else ""
+                    fn = (name_obj.get("family-name") or {}).get("value") if name_obj.get("family-name") else ""
+                    outp["given_names"] = gn or ""; outp["family_name"] = fn or ""; outp["display_name"] = f"{gn} {fn}".strip()
+                other = (pd or {}).get("other-names") or {}
+                ons = []
+                if other.get("other-name"):
+                    for item in other.get("other-name"):
+                        if item and item.get("content"):
+                            ons.append(item.get("content"))
+                outp["other_names"] = ons
+                return outp
+            def parse_affs(ad: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
+                items: List[Dict[str, Any]] = []
+                for group in (ad or {}).get("affiliation-group", []) or []:
+                    for s in (group or {}).get("summaries", []) or []:
+                        if not s or key not in s:
+                            continue
+                        sd = s[key]
+                        org = (sd or {}).get("organization", {}) or {}
+                        items.append({
+                            "organization": org.get("name", "") or "",
+                            "department": (sd or {}).get("department-name", "") or "",
+                            "role": (sd or {}).get("role-title", "") or "",
+                            "start_date": _parse_orcid_date((sd or {}).get("start-date")),
+                            "end_date": _parse_orcid_date((sd or {}).get("end-date")),
+                        })
+                # format dates
+                for it in items:
+                    it["start_date"] = _parse_orcid_date(it["start_date"]) if isinstance(it.get("start_date"), str) else _parse_orcid_date("")
+                    it["end_date"] = _parse_orcid_date(it["end_date"]) if isinstance(it.get("end_date"), str) else _parse_orcid_date("")
+                return items
+            info = {"orcid_id": orcid_id}
+            info.update(parse_person(person))
+            info["employments"] = parse_affs(emp, "employment-summary")
+            info["educations"] = parse_affs(edu, "education-summary")
+            # strict name check (display_name or given+family or any other_names)
+            target = _name_tokens(name)
+            disp_t = _name_tokens(info.get("display_name", ""))
+            gn_t = _name_tokens(info.get("given_names", ""))
+            fn_t = _name_tokens(info.get("family_name", ""))
+            full_gf = gn_t + fn_t if (gn_t or fn_t) else []
+            other_list = (info.get("other_names") or [])
+            other_ts = [_name_tokens(x) for x in other_list]
+            def eq_tokens(a, b):
+                return a == b or a == list(reversed(b))
+            matched = (
+                (disp_t and eq_tokens(disp_t, target))
+                or (full_gf and eq_tokens(full_gf, target))
+                or any(eq_tokens(t, target) for t in other_ts if t)
+            )
+            _log_orcid_candidate(info, matched)
+            if matched:
+                out.append(info)
+        # Fallback: use expanded-search if no strict candidate found from classic search
+        if len(out) < max_candidates:
+            # derive given and family from tokens (last token as family)
+            toks = _name_tokens(name)
+            if toks:
+                given = " ".join(toks[:-1]) if len(toks) > 1 else toks[0]
+                family = toks[-1]
+                try:
+                    er = sess.get(
+                        f"{urls['base']}/expanded-search",
+                        params={"q": f"given-names:{given} AND family-name:{family}", "rows": 20},
+                        headers=headers,
+                        timeout=15,
+                    )
+                    if er.status_code == 200:
+                        edata = er.json() or {}
+                        eitems = edata.get("result") or edata.get("expanded-result") or []
+                        # log raw expanded-search results (truncated)
+                        _log_json_sample("expanded-search", eitems[:10])
+                        ids: List[str] = []
+                        for it in eitems:
+                            oid = (it.get("orcid-id") if isinstance(it, dict) else None) or ((it.get("orcid-identifier") or {}).get("path") if isinstance(it, dict) else None)
+                            if oid:
+                                ids.append(str(oid))
+                        # fetch details for ids and apply the same strict check
+                        for oid in ids:
+                            if len(out) >= max_candidates:
+                                break
+                            try:
+                                p = sess.get(f"{urls['base']}/{oid}/person", headers=headers, timeout=10)
+                                person = p.json() if p.status_code == 200 else {}
+                                e = sess.get(f"{urls['base']}/{oid}/employments", headers=headers, timeout=10)
+                                emp = e.json() if e.status_code == 200 else {}
+                                d = sess.get(f"{urls['base']}/{oid}/educations", headers=headers, timeout=10)
+                                edu = d.json() if d.status_code == 200 else {}
+                            except Exception as ex:
+                                logger.warning(f"ORCID fetch failed for {oid}: {ex}")
+                                continue
+                            info = {"orcid_id": oid}
+                            # reuse parsers
+                            def parse_person(pd: Dict[str, Any]) -> Dict[str, Any]:
+                                outp = {"display_name": "", "given_names": "", "family_name": "", "other_names": []}
+                                name_obj = (pd or {}).get("name") or {}
+                                if name_obj:
+                                    gn = (name_obj.get("given-names") or {}).get("value") if name_obj.get("given-names") else ""
+                                    fn = (name_obj.get("family-name") or {}).get("value") if name_obj.get("family-name") else ""
+                                    outp["given_names"] = gn or ""; outp["family_name"] = fn or ""; outp["display_name"] = f"{gn} {fn}".strip()
+                                other = (pd or {}).get("other-names") or {}
+                                ons = []
+                                if other.get("other-name"):
+                                    for item in other.get("other-name"):
+                                        if item and item.get("content"):
+                                            ons.append(item.get("content"))
+                                outp["other_names"] = ons
+                                return outp
+                            def parse_affs(ad: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
+                                items: List[Dict[str, Any]] = []
+                                for group in (ad or {}).get("affiliation-group", []) or []:
+                                    for s in (group or {}).get("summaries", []) or []:
+                                        if not s or key not in s:
+                                            continue
+                                        sd = s[key]
+                                        org = (sd or {}).get("organization", {}) or {}
+                                        items.append({
+                                            "organization": org.get("name", "") or "",
+                                            "department": (sd or {}).get("department-name", "") or "",
+                                            "role": (sd or {}).get("role-title", "") or "",
+                                            "start_date": _parse_orcid_date((sd or {}).get("start-date")),
+                                            "end_date": _parse_orcid_date((sd or {}).get("end-date")),
+                                        })
+                                for it in items:
+                                    it["start_date"] = _parse_orcid_date(it["start_date"]) if isinstance(it.get("start_date"), str) else _parse_orcid_date("")
+                                    it["end_date"] = _parse_orcid_date(it["end_date"]) if isinstance(it.get("end_date"), str) else _parse_orcid_date("")
+                                return items
+                            info.update(parse_person(person))
+                            info["employments"] = parse_affs(emp, "employment-summary")
+                            info["educations"] = parse_affs(edu, "education-summary")
+                            # strict token check again
+                            target = _name_tokens(name)
+                            disp_t = _name_tokens(info.get("display_name", ""))
+                            gn_t = _name_tokens(info.get("given_names", ""))
+                            fn_t = _name_tokens(info.get("family_name", ""))
+                            full_gf = gn_t + fn_t if (gn_t or fn_t) else []
+                            other_list = (info.get("other_names") or [])
+                            other_ts = [_name_tokens(x) for x in other_list]
+                            def eq_tokens(a, b):
+                                return a == b or a == list(reversed(b))
+                            matched2 = (
+                                (disp_t and eq_tokens(disp_t, target))
+                                or (full_gf and eq_tokens(full_gf, target))
+                                or any(eq_tokens(t, target) for t in other_ts if t)
+                            )
+                            _log_orcid_candidate(info, matched2)
+                            if matched2:
+                                out.append(info)
+                except Exception:
+                    pass
+        _ORCID_CANDIDATES_CACHE[key] = out
+        return out
+    except Exception as ex:
+        try:
+            logger.exception(f"ORCID candidates error for name='{name}': {ex}")
+        except Exception:
+            pass
+        # return whatever was accumulated so far to avoid silent drops
+        return locals().get('out', [])
+
+
 async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
     """Enrich a single paper using ORCID: per author, if ORCID record strictly matches name and
     the institution matches the paper-extracted affiliation, capture orcid and role/start/end.
@@ -574,19 +820,32 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
     author_names = [(item.get("name") or "").strip() for item in aff_map if (item.get("name") or "").strip()]
     name_to_author_row: Dict[str, Dict[str, Any]] = {}
     name_to_aff_covered: Dict[str, Dict[str, bool]] = {}
+    author_id_to_db_affs: Dict[int, List[str]] = {}
     try:
         db_uri = os.getenv("DATABASE_URL")
         if db_uri and author_names:
             await DatabaseManager.initialize(db_uri)
-            pool = await DatabaseManager.get_pool()
-            async with pool.connection() as conn:
-                async with conn.cursor() as cur:
+        pool = await DatabaseManager.get_pool()
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
                     for nm in author_names:
                         # author basic
                         await cur.execute("SELECT id, orcid FROM authors WHERE author_name_en = %s LIMIT 1", (nm,))
                         row = await cur.fetchone()
                         if row:
                             name_to_author_row[nm] = {"id": row[0], "orcid": row[1]}
+                            # known DB affiliations for this author
+                            await cur.execute(
+                                """
+                                SELECT f.aff_name
+                                FROM author_affiliation aa
+                                JOIN affiliations f ON f.id = aa.affiliation_id
+                                WHERE aa.author_id = %s
+                                """,
+                                (row[0],),
+                            )
+                            aff_rows = await cur.fetchall()
+                            author_id_to_db_affs[row[0]] = [r[0] for r in (aff_rows or []) if r and r[0]]
                         # affiliation coverage map
                         for item in [x for x in aff_map if (x.get("name") or "").strip() == nm]:
                             for aff in (item.get("affiliations") or []):
@@ -624,11 +883,25 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
                     break
             if all_cov:
                 return None, None
-        for aff in affs:
-            async with _ORCID_SEM:
-                info = await asyncio.to_thread(_orcid_search_and_pick, name, aff, 10)
-            if info:
-                return aff, info
+        # Build candidate affiliation pool: DB-known (by author_id) + current paper-extracted
+        author_id = (pre or {}).get("id")
+        db_affs = author_id_to_db_affs.get(author_id or -1, [])
+        pool_affs = []
+        seen = set()
+        for s in (db_affs + affs):
+            if not s:
+                continue
+            ss = " ".join(s.split())
+            if ss not in seen:
+                seen.add(ss); pool_affs.append(ss)
+        # Fetch strict-name candidates once, then try to match any candidate to any affiliation
+        async with _ORCID_SEM:
+            cands = await asyncio.to_thread(_orcid_candidates_by_name, name, 5)
+        for cand in cands or []:
+            for aff in pool_affs:
+                best = _best_aff_match_for_institution(aff, cand)
+                if best:
+                    return aff, {**cand, "_best": best}
         return None, None
 
     tasks = []
@@ -657,9 +930,21 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
         orcid_id = info.get("orcid_id")
         if orcid_id:
             orcid_by_author[name] = orcid_id
-        best_aff = _best_aff_match_for_institution(aff_used, info)
+        best_aff = info.get("_best") or _best_aff_match_for_institution(aff_used, info)
         if best_aff:
-            role = (best_aff.get("role") or "").strip() or None
+            # Combine role and department for complete role information
+            role_title = (best_aff.get("role") or "").strip()
+            department = (best_aff.get("department") or "").strip()
+            
+            # Only store actual roles, not department names as roles
+            if role_title and department:
+                role = f"{role_title} ({department})"
+            elif role_title:
+                role = role_title
+            else:
+                # Don't use department as role if no actual role exists
+                role = None
+                
             sd = _parse_orcid_date(best_aff.get("start_date") or "")
             ed = _parse_orcid_date(best_aff.get("end_date") or "")
             norm_key = (" ".join((aff_used or "").split()).replace(" ", "").lower())
@@ -1088,7 +1373,6 @@ def _norm_string(s: str) -> str:
 
 
 _DEPT_PREFIX = re.compile(r"^(department|dept\.?|school|faculty|college|laboratory|laboratories|lab|centre|center|institute|institutes|academy|division|unit)\s+of\s+", re.IGNORECASE)
-_INST_KEYWORDS = re.compile(r"university|institute|college|academy|polytechnic|universit[eé]|universidad|universita", re.IGNORECASE)
 
 
 def _strip_parentheses(s: str) -> str:
@@ -1111,9 +1395,21 @@ def _strip_dept_prefix(s: str) -> str:
 
 
 def _normalize_aff_variants(name: str) -> List[str]:
-    # build multiple textual candidates aiming to keep the institution tail
+    """Generate normalized variants of an affiliation name for fuzzy matching.
+    
+    Args:
+        name: The original affiliation name
+        
+    Returns:
+        List of normalized variants (lowercased, alphanumeric only)
+    """
+    if not name or not name.strip():
+        return []
+    
+    # Generate text candidates through various transformations
     tail1 = _last_segment_after_comma(name)
-    tail2 = ", ".join([p.strip() for p in (name or "").split(",")[-2:]]) if "," in (name or "") else name
+    tail2 = ", ".join([p.strip() for p in name.split(",")[-2:]]) if "," in name else name
+    
     candidates = [
         name,
         _strip_parentheses(name),
@@ -1125,18 +1421,33 @@ def _normalize_aff_variants(name: str) -> List[str]:
         _strip_dept_prefix(tail1),
         tail2,
     ]
-    # Also include article-stripped forms to handle leading "The ..."
-    candidates += [_strip_articles(c) for c in list(candidates)]
+    
+    # Include article-stripped forms (e.g., "The University" -> "University")
+    candidates += [_strip_articles(c) for c in candidates]
+    
+    # Define organization keywords (academic + corporate)
+    org_keywords = re.compile(
+        r'\b(university|institute|college|academy|polytechnic|universit[eé]|universidad|universita|'
+        r'group|corp|corporation|company|ltd|limited|inc|incorporated|llc|co\.|gmbh|sa|ag|bv|pty|pte|'
+        r'technologies|tech|lab|labs|laboratory|laboratories|research|systems|solutions|international|global)\b', 
+        re.IGNORECASE
+    )
+    
+    # Normalize and deduplicate
     norms = []
     for c in candidates:
-        # prefer tail segments that actually look like institutions
+        if not c or not c.strip():
+            continue
+            
+        # For tail segments, ensure they contain recognizable organization keywords
         if c in (tail1, _strip_dept_prefix(tail1), tail2):
-            if not _INST_KEYWORDS.search(c):
-                # skip tails without institution-like keywords to avoid false positives
+            if not org_keywords.search(c):
                 continue
-        n = _norm_string(c)
-        if n and n not in norms:
-            norms.append(n)
+                
+        normalized = _norm_string(c)
+        if normalized and normalized not in norms:
+            norms.append(normalized)
+    
     return norms
  
 
@@ -1159,8 +1470,8 @@ def _project_root() -> str:
 
 
 def _qs_csv_path() -> str:
-    # docs/qs-world-rankings-2025.csv located at project root /docs
-    return os.path.join(_project_root(), "docs", "qs-world-rankings-2025.csv")
+    # resource/qs-world-rankings-2025.csv located at project root /resource
+    return os.path.join(_project_root(), "resource", "qs-world-rankings-2025.csv")
 
 
 def _load_qs_rankings() -> tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]:

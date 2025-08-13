@@ -2,10 +2,13 @@
 
 ## 项目简介
 
-- 从 arXiv 抓取近 N 天论文，写入规范化数据库表（papers/authors/affiliations 等），并为作者抽取机构（PDF 首页 + LLM 映射）。
+- 从 arXiv 抓取近 N 天论文，写入规范化数据库表（papers/authors/affiliations 等），并为作者抽取机构（PDF 首页 + LLM- **ORCID 富化**：
+  - 新数据：抓取流程内并行尝试 ORCID（受限并发），仅在"作者姓名严格一致 + 机构相似匹配通过"时，补全 `authors.orcid` 与 `author_affiliation.role/start_date/end_date`（保守更新）。
+  - 老数据：提供批量和单个作者接口进行补齐；支持只更新空值或完全覆盖两种模式。
+  - 角色信息：自动组合 ORCID 的 `role-title` 和 `department-name` 为完整角色，如 `"Senior Staff Engineer (Tongyi Lab)"`；仅在有实际角色时存储，避免将部门名误当作角色。）。
 - 提供最小聊天接口（DashScope 兼容 OpenAI）。
 - 提供前端 React 看板（Vite + Ant Design），展示总览与作者模糊检索（机构、最近论文、合作作者）。
-- 新增 ORCID 富化：基于作者姓名 + 机构相似匹配补全作者 ORCID 与作者-机构的 role/start_date/end_date。
+- 新增 ORCID 富化：基于作者姓名 + 机构相似匹配补全作者 ORCID 与作者-机构的 role/start_date/end_date，支持角色信息完整组合。
 
 技术栈：FastAPI、LangGraph（Send 并行）、psycopg3、requests、pdfplumber、Supabase Python SDK（通用查询）、React + Ant Design、ORCID Public API。
 
@@ -86,13 +89,21 @@ curl -X POST \
   - 匹配：忽略大小写/空格；自动去括号、去部门前缀、截取逗号前主体；支持相似度匹配（阈值设定，避免误配）。
   - 可选参数：`force_country`、`force_rank`（布尔），用于覆盖已有国家/排名。
 
-- 历史 ORCID 富化（临时）：`POST /data/enrich-orcid`
+- 批量 ORCID 富化：`POST /data/enrich-orcid`
   - 功能：批量为既有作者-机构关系补齐 `authors.orcid` 与 `author_affiliation.role/start_date/end_date`。
-  - 匹配：作者姓名严格相等（去空格小写后），机构采用与 QS 对齐一致的变体归一化 + 相似度匹配（阈值≈0.86）。
-  - 选项：`only_missing`（默认 true）、`batch_size`、`max_rows`。
+  - 匹配：作者姓名严格相等，机构采用相似度匹配（阈值≈0.86）。
+  - 参数：
+    - `only_missing`：布尔，默认 `true`。为 `true` 时只更新 NULL 值；为 `false` 时覆盖所有匹配数据。
+    - `batch_size`：批次大小，默认 200
+    - `max_rows`：处理上限，默认 2000
+  - 角色信息：自动组合 `role-title + (department-name)`，如 `"Senior Staff Engineer (Tongyi Lab)"`
 
-- 历史 latest_time 回填（临时）：`POST /data/backfill-author-affiliation-latest-time`
-  - 功能：按作者发表论文的最大 `published` 回填 `author_affiliation.latest_time`。幂等可重复执行。
+- 单个作者 ORCID 富化：`POST /data/enrich-orcid-author`
+  - 功能：为指定作者补齐 ORCID 与机构关系信息。
+  - 参数：
+    - `author_id`：作者 ID（必需）
+    - `overwrite`：布尔，默认 `false`。为 `true` 时覆盖现有数据；为 `false` 时只更新空值。
+  - 示例：`POST /data/enrich-orcid-author?author_id=796&overwrite=true`
 
 - 看板总览：`GET /dashboard/overview`
 - 作者检索：`GET /dashboard/author?q=模糊人名`
@@ -150,7 +161,7 @@ curl -X POST \
 ## 备注
 - 若抓取响应 `inserted=0, skipped=0` 且 `fetched>0`：通常是并行聚合/版本不一致或 RLS/权限问题；已将 Send 并行按官方推荐接线并在写库前汇合。Supabase RLS 下请确保 INSERT 策略放行。
 - 若机构为空：可能 PDF 不可抽取或 LLM 返回不规范；已加入短退避重试与严格 JSON 解析，仍失败则为空。
-- 临时维护接口（`/data/enrich-orcid`、`/data/backfill-author-affiliation-latest-time`）仅用于历史数据补齐，完成后可移除路由或停用。
+- ORCID 富化支持灵活更新策略：批量接口用 `only_missing` 参数，单个作者接口用 `overwrite` 参数，可根据需要选择只更新空值或完全覆盖。
 
 ---
 如需扩展：
