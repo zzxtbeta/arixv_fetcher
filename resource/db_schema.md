@@ -3,13 +3,13 @@
   1. 建表SQL（字段后面的注释是对应数据路径，数据来源是arxiv api或论文pdf/bbl）
 create table papers (
     id int primary key,   
-    paper_title varchar(300),         --  [*].authors[*].name
+    paper_title text,                 --  [*].authors[*].name
     published date,                   --  [*].published
     updated date,                     --  [*].updated
     abstract text,                    --  [*].summary
     doi varchar(100) unique,          --  [*].doi  (一般arxiv api不返回对应 entry 需另取数据源)
-    pdf_source varchar(100),          --  
-    arxiv_entry varchar(100) unique,  --  [*].links.pdf的数字部分
+    pdf_source text,                  --  
+    arxiv_entry text unique,          --  [*].links.pdf的数字部分
     unique (paper_title, published)
 );
   2. 设计说明：
@@ -20,8 +20,8 @@ create table papers (
   1. 建表SQL
 create table authors (
     id int primary key,
-    author_name_en varchar(100),       --  [*].authors[*].name
-    author_name_cn varchar(100),       -- 需外部数据源
+    author_name_en text,               --  [*].authors[*].name
+    author_name_cn text,               -- 需外部数据源
     email varchar(100) unique,         -- pdf
     orcid varchar(100) unique          -- 需外部数据源
 );
@@ -31,11 +31,11 @@ create table authors (
   1. 建表SQL
 create table affiliations (
     id int primary key,           
-    aff_name varchar(300) unique,      --  [*].authors[*].affiliation (一般arxiv api不返回此 entry 需另取数据源)
+    aff_name text unique,              --  [*].authors[*].affiliation (一般arxiv api不返回此 entry 需另取数据源)
     aff_type enum('university', 'research_institute', 'other') not null, -- 设计逻辑判断
-    country varchar(100),              -- 需外部数据源
-    state varchar(100),                -- 需外部数据源
-    city varchar(100)                  -- 需外部数据源
+    country text,                      -- 需外部数据源
+    state text,                        -- 需外部数据源
+    city text                          -- 需外部数据源
 );
   2. 说明：
     1. 数据唯一性通过“aff_name”字段实现；在业务层进行规范化去重：忽略大小写与空白字符差异（例如 "Zhejiang University" 与 "zhejiangUniversity" 视为同一机构）。
@@ -44,7 +44,7 @@ create table affiliations (
   1. 建表SQL
 create table ranking_systems (
     id int primary key,    
-    system_name varchar(100) unique,   -- 需外部数据源
+    system_name text unique,           -- 需外部数据源
     update_frequency varchar(50)       -- 需外部数据源
 );
   2. 说明：
@@ -53,7 +53,7 @@ create table ranking_systems (
   1. 建表SQL
 create table keywords (
     id int primary key,
-    keyword varchar(300) unique        --  [*].links[*].pdf 中提取
+    keyword text unique                --  [*].links[*].pdf 中提取
 );
   2. 说明：
     1. 数据唯一性用“keyword”表示即可，实际上主键也可以直接设置为“keyword”，不过为了统一建表风格，还是添加了额外的自增主键“keyword_id”。
@@ -61,7 +61,7 @@ create table keywords (
   1. 建表SQL
 create table categories (
     id int primary key,
-    category varchar(300) unique           --  [*].category[*][$schema]
+    category text unique               --  [*].category[*][$schema]
 );
   2. 说明：
     1. 数据唯一性用“category”表示即可，实际上主键也可以直接设置为“category”，不过为了统一建表风格，还是添加了额外的自增主键“category_id”。
@@ -69,8 +69,8 @@ create table categories (
   1. 建表SQL
 create table people_verified (
     id int primary key,
-    name_en varchar(300),           -- 需外部数据源
-    name_cn varchar(300)            -- 需外部数据源
+    name_en text,                      -- 需外部数据源
+    name_cn text                       -- 需外部数据源
 );
   2. 说明：
     1. 此表暂不插入任何数据。

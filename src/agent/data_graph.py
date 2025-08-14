@@ -936,13 +936,13 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
             role_title = (best_aff.get("role") or "").strip()
             department = (best_aff.get("department") or "").strip()
             
-            # Only store actual roles, not department names as roles
             if role_title and department:
                 role = f"{role_title} ({department})"
             elif role_title:
                 role = role_title
+            elif department:
+                role = department
             else:
-                # Don't use department as role if no actual role exists
                 role = None
                 
             sd = _parse_orcid_date(best_aff.get("start_date") or "")
@@ -1212,13 +1212,13 @@ async def _create_schema_if_not_exists(cur) -> None:
         """
         CREATE TABLE IF NOT EXISTS papers (
             id BIGSERIAL PRIMARY KEY,
-            paper_title VARCHAR(300),
+            paper_title TEXT,
             published DATE,
             updated DATE,
             abstract TEXT,
             doi VARCHAR(100) UNIQUE,
-            pdf_source VARCHAR(300),
-            arxiv_entry VARCHAR(100) UNIQUE,
+            pdf_source TEXT,
+            arxiv_entry TEXT UNIQUE,
             UNIQUE (paper_title, published)
         )
         """
@@ -1227,8 +1227,8 @@ async def _create_schema_if_not_exists(cur) -> None:
         """
         CREATE TABLE IF NOT EXISTS authors (
             id BIGSERIAL PRIMARY KEY,
-            author_name_en VARCHAR(100),
-            author_name_cn VARCHAR(100),
+            author_name_en TEXT,
+            author_name_cn TEXT,
             email VARCHAR(100) UNIQUE,
             orcid VARCHAR(100) UNIQUE
         )
@@ -1238,11 +1238,11 @@ async def _create_schema_if_not_exists(cur) -> None:
         """
         CREATE TABLE IF NOT EXISTS affiliations (
             id BIGSERIAL PRIMARY KEY,
-            aff_name VARCHAR(300) UNIQUE,
-            aff_type VARCHAR(50),
-            country VARCHAR(100),
-            state VARCHAR(100),
-            city VARCHAR(100)
+            aff_name TEXT UNIQUE,
+            aff_type TEXT,
+            country TEXT,
+            state TEXT,
+            city TEXT
         )
         """
     )
@@ -1250,7 +1250,7 @@ async def _create_schema_if_not_exists(cur) -> None:
         """
         CREATE TABLE IF NOT EXISTS ranking_systems (
             id BIGSERIAL PRIMARY KEY,
-            system_name VARCHAR(100) UNIQUE,
+            system_name TEXT UNIQUE,
             update_frequency VARCHAR(50)
         )
         """
@@ -1259,7 +1259,7 @@ async def _create_schema_if_not_exists(cur) -> None:
         """
         CREATE TABLE IF NOT EXISTS keywords (
             id BIGSERIAL PRIMARY KEY,
-            keyword VARCHAR(300) UNIQUE
+            keyword TEXT UNIQUE
         )
         """
     )
@@ -1267,7 +1267,7 @@ async def _create_schema_if_not_exists(cur) -> None:
         """
         CREATE TABLE IF NOT EXISTS categories (
             id BIGSERIAL PRIMARY KEY,
-            category VARCHAR(300) UNIQUE
+            category TEXT UNIQUE
         )
         """
     )
@@ -1275,8 +1275,8 @@ async def _create_schema_if_not_exists(cur) -> None:
         """
         CREATE TABLE IF NOT EXISTS people_verified (
             id BIGSERIAL PRIMARY KEY,
-            name_en VARCHAR(300),
-            name_cn VARCHAR(300)
+            name_en TEXT,
+            name_cn TEXT
         )
         """
     )
@@ -1470,8 +1470,8 @@ def _project_root() -> str:
 
 
 def _qs_csv_path() -> str:
-    # resource/qs-world-rankings-2025.csv located at project root /resource
-    return os.path.join(_project_root(), "resource", "qs-world-rankings-2025.csv")
+    # docs/qs-world-rankings-2025.csv located at project root /docs
+    return os.path.join(_project_root(), "docs", "qs-world-rankings-2025.csv")
 
 
 def _load_qs_rankings() -> tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]:
