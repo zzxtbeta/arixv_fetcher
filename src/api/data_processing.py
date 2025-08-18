@@ -286,7 +286,7 @@ async def enrich_orcid_api(
         import asyncio
         from typing import Any, Dict, Optional
         from src.db.database import DatabaseManager
-        from src.agent.data_graph import _orcid_search_and_pick, _best_aff_match_for_institution, _parse_orcid_date
+        from src.agent.utils import orcid_search_and_pick, best_aff_match_for_institution, parse_orcid_date
 
         db_uri = os.getenv("DATABASE_URL")
         if not db_uri:
@@ -304,10 +304,10 @@ async def enrich_orcid_api(
 
         async def lookup_one(author_name: str, aff_name: str) -> Optional[Dict[str, Any]]:
             async with sem:
-                info = await asyncio.to_thread(_orcid_search_and_pick, author_name, aff_name, 10)
+                info = await asyncio.to_thread(orcid_search_and_pick, author_name, aff_name, 10)
                 if not info:
                     return None
-                best = _best_aff_match_for_institution(aff_name, info)
+                best = best_aff_match_for_institution(aff_name, info)
                 if not best:
                     return None
                     
@@ -324,8 +324,8 @@ async def enrich_orcid_api(
                     # Don't use department as role if no actual role exists
                     role = None
                     
-                sd = _parse_orcid_date(best.get("start_date") or "")
-                ed = _parse_orcid_date(best.get("end_date") or "")
+                sd = parse_orcid_date(best.get("start_date") or "")
+                ed = parse_orcid_date(best.get("end_date") or "")
                 return {"orcid": info.get("orcid_id"), "role": role, "start_date": sd, "end_date": ed}
 
         total = 0
@@ -490,7 +490,7 @@ async def enrich_orcid_for_author(request: Request, author_id: int, overwrite: b
     - Update author.orcid and author_affiliation.role/start_date/end_date
     """
     from src.db.database import DatabaseManager
-    from src.agent.data_graph import _orcid_search_and_pick, _best_aff_match_for_institution, _parse_orcid_date
+    from src.agent.utils import orcid_search_and_pick, best_aff_match_for_institution, parse_orcid_date
     import os
     
     try:
@@ -529,7 +529,7 @@ async def enrich_orcid_for_author(request: Request, author_id: int, overwrite: b
                 # Process each affiliation
                 for aff_id, aff_name, current_role, current_start, current_end in aff_rows:
                     # Search ORCID
-                    info = _orcid_search_and_pick(author_name, aff_name, 10)
+                    info = orcid_search_and_pick(author_name, aff_name, 10)
                     if not info:
                         continue
                     
@@ -544,7 +544,7 @@ async def enrich_orcid_for_author(request: Request, author_id: int, overwrite: b
                         current_orcid = orcid_id
                     
                     # Find best affiliation match
-                    best = _best_aff_match_for_institution(aff_name, info)
+                    best = best_aff_match_for_institution(aff_name, info)
                     if not best:
                         continue
                     
@@ -561,8 +561,8 @@ async def enrich_orcid_for_author(request: Request, author_id: int, overwrite: b
                         # Don't use department as role if no actual role exists
                         new_role = None
                     
-                    new_start = _parse_orcid_date(best.get("start_date") or "")
-                    new_end = _parse_orcid_date(best.get("end_date") or "")
+                    new_start = parse_orcid_date(best.get("start_date") or "")
+                    new_end = parse_orcid_date(best.get("end_date") or "")
                     
                     # Update affiliation data
                     updates = []

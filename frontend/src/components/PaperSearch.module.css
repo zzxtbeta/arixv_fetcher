@@ -1,0 +1,32 @@
+.searchContainer {
+  width: 100%;
+  margin-bottom: 16px;
+}
+
+.searchContainer .ant-space-compact {
+  display: flex;
+  align-items: center;
+}
+
+.searchContainer .ant-btn {
+  border-radius: 0;
+}
+
+.searchContainer .ant-btn:first-child {
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+}
+
+.searchContainer .ant-btn:last-child {
+  border-top-right-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+
+.searchContainer .ant-select {
+  flex-shrink: 0;
+}
+
+.searchContainer .ant-input {
+  flex: 1;
+  border-radius: 0 !important;
+}

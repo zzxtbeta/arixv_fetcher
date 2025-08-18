@@ -2,6 +2,7 @@ import { Card, List, Typography, Space, Tag, Pagination, Button, InputNumber, Se
 import { useEffect, useState } from 'react'
 import { getLatestPapers, triggerFetch, triggerFetchById } from '../api'
 import dayjs from 'dayjs'
+import PaperSearch from './PaperSearch'
 
 export default function LatestPapers() {
   const [page, setPage] = useState(1)
@@ -9,6 +10,11 @@ export default function LatestPapers() {
   const [total, setTotal] = useState(0)
   const [items, setItems] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+
+  // Search states
+  const [titleSearch, setTitleSearch] = useState('')
+  const [arxivSearch, setArxivSearch] = useState('')
+  const [isSearching, setIsSearching] = useState(false)
 
   const [categories, setCategories] = useState<string | undefined>('cs.AI,cs.CV')
   const [maxResults, setMaxResults] = useState<number | undefined>(50)
@@ -26,7 +32,7 @@ export default function LatestPapers() {
   async function load() {
     setLoading(true)
     try {
-      const data = await getLatestPapers(page, limit)
+      const data = await getLatestPapers(page, limit, titleSearch, arxivSearch)
       setItems(data.items || [])
       setTotal(data.total || 0)
     } catch (e: any) {
@@ -36,7 +42,38 @@ export default function LatestPapers() {
     }
   }
 
-  useEffect(() => { load() }, [page, limit])
+  useEffect(() => { load() }, [page, limit, titleSearch, arxivSearch])
+
+  // Handle search functionality
+  const handleSearch = (searchType: 'title' | 'arxiv', searchTerm: string) => {
+    if (searchType === 'title') {
+      setTitleSearch(searchTerm)
+      setArxivSearch('')
+    } else {
+      setArxivSearch(searchTerm)  
+      setTitleSearch('')
+    }
+    setPage(1) // Reset to first page when searching
+    setIsSearching(true)
+  }
+
+  const handleClearSearch = () => {
+    setTitleSearch('')
+    setArxivSearch('')
+    setPage(1)
+    setIsSearching(false)
+  }
+
+  // Get display title for card header
+  const getCardTitle = () => {
+    if (titleSearch) {
+      return `Papers matching "${titleSearch}" (${total} results)`
+    }
+    if (arxivSearch) {
+      return `Papers matching arXiv "${arxivSearch}" (${total} results)`
+    }
+    return `Latest Papers (${total} total)`
+  }
 
   async function onTrigger() {
     setFetching(true)
@@ -50,6 +87,8 @@ export default function LatestPapers() {
       })
       message.success(`Fetched=${res.fetched}, Inserted=${res.inserted}, Skipped=${res.skipped}`)
       setPage(1)
+      // Clear search when refreshing data
+      handleClearSearch()
       await load()
     } catch (e: any) {
       message.error(e?.message || 'Trigger failed')
@@ -70,6 +109,8 @@ export default function LatestPapers() {
       message.success(`Fetched=${res.fetched}, Inserted=${res.inserted}, Skipped=${res.skipped}`)
       setIds('')
       setPage(1)
+      // Clear search when refreshing data
+      handleClearSearch()
       await load()
     } catch (e: any) {
       message.error(e?.message || 'Trigger by ID failed')
@@ -85,7 +126,7 @@ export default function LatestPapers() {
 
   return (
     <Card
-      title="Latest Papers"
+      title={getCardTitle()}
       extra={
         <Space wrap>
           <Typography.Text type="secondary">Date Range</Typography.Text>
@@ -138,6 +179,13 @@ export default function LatestPapers() {
       style={{ background: '#ffffff', borderRadius: 12 }}
       bodyStyle={{ padding: 16 }}
     >
+      {/* Search Component */}
+      <PaperSearch
+        onSearch={handleSearch}
+        onClear={handleClearSearch}
+        loading={loading}
+      />
+
       <List
         loading={loading}
         dataSource={items}
@@ -159,6 +207,9 @@ export default function LatestPapers() {
             </Space>
           </List.Item>
         )}
+        locale={{
+          emptyText: isSearching ? 'No papers found matching your search criteria' : 'No papers available'
+        }}
       />
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
         <Pagination current={page} pageSize={limit} total={total} onChange={(cp, ps) => { setPage(cp); setLimit(ps) }} showSizeChanger />

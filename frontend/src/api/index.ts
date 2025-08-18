@@ -41,8 +41,11 @@ export async function triggerFetchById({ ids }: { ids: string }) {
   return data as { status: string; inserted: number; skipped: number; fetched: number }
 }
 
-export async function getLatestPapers(page = 1, limit = 20) {
-  const { data } = await api.get('/dashboard/latest-papers', { params: { page, limit } })
+export async function getLatestPapers(page = 1, limit = 20, titleSearch?: string, arxivSearch?: string) {
+  const params: any = { page, limit }
+  if (titleSearch?.trim()) params.title_search = titleSearch.trim()
+  if (arxivSearch?.trim()) params.arxiv_search = arxivSearch.trim()
+  const { data } = await api.get('/dashboard/latest-papers', { params })
   return data as { items: Array<any>; total: number; page: number; limit: number }
 }
 
@@ -54,4 +57,49 @@ export async function getAffiliationPaperCount(days = 7) {
 export async function getAffiliationAuthorCount(days = 7) {
   const { data } = await api.get('/dashboard/charts/affiliation-author-count', { params: { days } })
   return data as { items: Array<{ affiliation: string; count: number }>; days: number }
+}
+
+export async function webSearchPerson(name: string, affiliation: string, searchPrompt: string) {
+  const params = new URLSearchParams()
+  params.set('name', name)
+  params.set('affiliation', affiliation)
+  params.set('search_prompt', searchPrompt)
+  const { data } = await api.post(`/dashboard/web-search?${params.toString()}`)
+  return data as {
+    success: boolean
+    name: string
+    affiliation: string
+    search_prompt: string
+    query: string
+    answer: string
+    results: Array<{
+      title: string
+      url: string
+      content: string
+      score: number
+    }>
+    error?: string
+  }
+}
+
+export async function searchPersonRole(name: string, affiliation: string) {
+  const params = new URLSearchParams()
+  params.set('name', name)
+  params.set('affiliation', affiliation)
+  const { data } = await api.post(`/dashboard/search-role?${params.toString()}`)
+  return data as {
+    success: boolean
+    name: string
+    affiliation: string
+    query: string
+    answer: string
+    extracted_role?: string
+    results: Array<{
+      title: string
+      url: string
+      content: string
+      score: number
+    }>
+    error?: string
+  }
 } 

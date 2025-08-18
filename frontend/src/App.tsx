@@ -2,6 +2,7 @@ import { Layout, Row, Col, theme } from 'antd'
 import OverviewCards from './components/OverviewCards'
 import AuthorSearch from './components/AuthorSearch'
 import LatestPapers from './components/LatestPapers'
+import WebSearch from './components/WebSearch'
 
 const { Header, Content, Footer } = Layout
 
@@ -19,6 +20,9 @@ export default function App() {
           </Col>
           <Col xs={24}>
             <AuthorSearch />
+          </Col>
+          <Col xs={24}>
+            <WebSearch />
           </Col>
           <Col xs={24}>
             <LatestPapers />

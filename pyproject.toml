@@ -22,7 +22,8 @@ dependencies = [
     "uvicorn",
     "python-multipart",
     "supabase",
-    "pdfplumber"
+    "pdfplumber",
+    "tavily-python"
 ]
 
 

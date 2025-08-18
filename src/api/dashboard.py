@@ -3,10 +3,16 @@
 from typing import Dict, Any, List, Set, Optional
 from datetime import datetime, timedelta, timezone, date
 from fastapi import APIRouter, HTTPException, Query, Request
+import logging
+import time
+import secrets
+import asyncio
+import os
 
 from src.db.supabase_client import supabase_client
-from src.agent.data_graph import _orcid_search_and_pick, _best_aff_match_for_institution, _parse_orcid_date
-from src.agent.data_graph import _orcid_candidates_by_name
+from src.agent.utils import orcid_search_and_pick, best_aff_match_for_institution, parse_orcid_date
+from src.agent.utils import orcid_candidates_by_name
+from src.agent.utils import search_person_general_with_tavily, search_person_role_with_tavily
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -223,22 +229,63 @@ async def author_search(q: str = Query(..., description="Fuzzy author name")) ->
 
 
 @router.get("/latest-papers")
-async def latest_papers(page: int = 1, limit: int = 20) -> Dict[str, Any]:
-    """Return latest papers with authors and categories, paginated."""
+async def latest_papers(
+    page: int = 1, 
+    limit: int = 20, 
+    title_search: Optional[str] = Query(None, description="Fuzzy search in paper title"),
+    arxiv_search: Optional[str] = Query(None, description="Fuzzy search in arXiv entry ID")
+) -> Dict[str, Any]:
+    """Return latest papers with authors and categories, paginated. Supports fuzzy search by title or arXiv ID."""
     try:
         if page < 1:
             page = 1
         if limit < 1:
             limit = 20
         offset = (page - 1) * limit
-        total = supabase_client.count("papers")
-        papers = supabase_client.select(
-            table="papers",
-            columns="id, paper_title, published, pdf_source, arxiv_entry",
-            order_by=("published", False),
-            limit=limit,
-            offset=offset,
-        )
+        
+        # Build filters for search functionality
+        filters = {}
+        search_active = False
+        
+        if title_search and title_search.strip():
+            # Use ilike for case-insensitive fuzzy matching on paper title
+            search_active = True
+            papers = supabase_client.select_ilike(
+                table="papers",
+                column="paper_title",
+                pattern=f"%{title_search.strip()}%",
+                columns="id, paper_title, published, pdf_source, arxiv_entry",
+                order_by=("published", False),
+            ) or []
+        elif arxiv_search and arxiv_search.strip():
+            # Use ilike for fuzzy matching on arXiv entry ID
+            search_active = True
+            papers = supabase_client.select_ilike(
+                table="papers",
+                column="arxiv_entry", 
+                pattern=f"%{arxiv_search.strip()}%",
+                columns="id, paper_title, published, pdf_source, arxiv_entry",
+                order_by=("published", False),
+            ) or []
+        else:
+            # Default behavior: get all papers ordered by published date
+            total = supabase_client.count("papers")
+            papers = supabase_client.select(
+                table="papers",
+                columns="id, paper_title, published, pdf_source, arxiv_entry",
+                order_by=("published", False),
+                limit=limit,
+                offset=offset,
+            )
+        
+        # For search results, handle pagination manually and calculate total
+        if search_active:
+            total = len(papers) if papers else 0
+            # Apply pagination to search results
+            start_idx = offset
+            end_idx = offset + limit
+            papers = papers[start_idx:end_idx] if papers else []
+        
         if not papers:
             return {"items": [], "total": total, "page": page, "limit": limit}
         ids = [p["id"] for p in papers]
@@ -394,4 +441,76 @@ async def chart_affiliation_author_count(days: int = 7) -> Dict[str, Any]:
         items.sort(key=lambda x: x["count"], reverse=True)
         return {"items": items, "days": days}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"affiliation-author-count failed: {e}") 
+        raise HTTPException(status_code=500, detail=f"affiliation-author-count failed: {e}")
+
+
+@router.post("/web-search")
+async def web_search_person(
+    name: str = Query(..., description="Person's full name"),
+    affiliation: str = Query(..., description="Institution/organization name"),
+    search_prompt: str = Query(..., description="Custom search prompt/question")
+) -> Dict[str, Any]:
+    """Search for person information using Tavily web search with custom prompt."""
+    try:
+        # Use general search with custom prompt
+        search_result = search_person_general_with_tavily(name, affiliation, search_prompt)
+        
+        if not search_result:
+            return {
+                "success": False,
+                "message": "Tavily web search is not available or failed",
+                "name": name,
+                "affiliation": affiliation,
+                "search_prompt": search_prompt
+            }
+        
+        # Format the response for frontend
+        return {
+            "success": search_result.get("search_successful", False),
+            "name": name,
+            "affiliation": affiliation,
+            "search_prompt": search_prompt,
+            "query": search_result.get("query", ""),
+            "answer": search_result.get("answer", ""),
+            "results": search_result.get("results", []),
+            "error": search_result.get("error")
+        }
+        
+    except Exception as e:
+        print(f"Web search API error: {e}")
+        raise HTTPException(status_code=500, detail=f"Web search failed: {str(e)}")
+
+
+@router.post("/search-role")
+async def search_person_role(
+    name: str = Query(..., description="Person's full name"),
+    affiliation: str = Query(..., description="Institution/organization name")
+) -> Dict[str, Any]:
+    """Search for person's role information using Tavily web search."""
+    try:
+        # Use specialized role search
+        search_result = search_person_role_with_tavily(name, affiliation)
+        
+        if not search_result:
+            return {
+                "success": False,
+                "message": "Tavily web search is not available or failed",
+                "name": name,
+                "affiliation": affiliation
+            }
+        
+        # Format the response for frontend
+        return {
+            "success": search_result.get("search_successful", False),
+            "name": name,
+            "affiliation": affiliation,
+            "query": search_result.get("query", ""),
+            "answer": search_result.get("answer", ""),
+            "extracted_role": search_result.get("extracted_role"),
+            "results": search_result.get("results", []),
+            "error": search_result.get("error")
+        }
+        
+    except Exception as e:
+        print(f"Role search API error: {e}")
+        raise HTTPException(status_code=500, detail=f"Role search failed: {str(e)}") 
