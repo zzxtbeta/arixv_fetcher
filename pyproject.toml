@@ -23,7 +23,8 @@ dependencies = [
     "python-multipart",
     "supabase",
     "pdfplumber",
-    "tavily-python"
+    "tavily-python",
+    "pyalex>=0.18"
 ]
 
 

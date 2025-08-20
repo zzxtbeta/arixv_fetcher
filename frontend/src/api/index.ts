@@ -102,4 +102,215 @@ export async function searchPersonRole(name: string, affiliation: string) {
     }>
     error?: string
   }
+}
+
+// ==================== OpenAlex API Functions ====================
+
+export interface OpenAlexAuthor {
+  id: string
+  display_name: string
+  orcid?: string
+  works_count: number
+  cited_by_count: number
+  h_index: number
+  i10_index?: number
+  academic_age?: number
+  current_institution?: {
+    name: string
+    country: string
+    type: string
+  }
+  research_areas?: Array<{
+    name: string
+    score: number
+  }>
+  phd_likelihood_score?: number
+}
+
+export interface OpenAlexPaper {
+  id: string
+  title: string
+  publication_year: number
+  cited_by_count: number
+  is_oa: boolean
+  authors: Array<{
+    name: string
+    orcid?: string
+    is_corresponding: boolean
+  }>
+  institutions: string[]
+  abstract?: string
+  trending_score?: number
+}
+
+export interface OpenAlexInstitution {
+  id: string
+  display_name: string
+  country_code: string
+  type: string
+  works_count: number
+  cited_by_count: number
+  homepage_url?: string
+}
+
+export async function searchOpenAlexAuthors(params: {
+  name?: string
+  institutions?: string
+  country?: string
+  per_page?: number
+}) {
+  const { data } = await api.get('/openalex/authors/search', { params })
+  return data as {
+    success: boolean
+    count: number
+    authors: OpenAlexAuthor[]
+    message: string
+  }
+}
+
+export async function findPhdCandidates(params: {
+  institutions: string
+  research_areas?: string
+  country?: string
+  min_works?: number
+  max_works?: number
+  recent_years?: number
+}) {
+  const { data } = await api.get('/openalex/authors/phd-candidates', { params })
+  return data as {
+    success: boolean
+    count: number
+    candidates: OpenAlexAuthor[]
+    query_parameters: any
+    message: string
+  }
+}
+
+export async function getAuthorCollaboration(authorId: string, limit = 50) {
+  const { data } = await api.get(`/openalex/authors/${authorId}/collaboration`, { params: { limit } })
+  return data as {
+    success: boolean
+    author_id: string
+    collaboration_network: {
+      total_collaborators: number
+      frequent_collaborators: Array<{
+        id: string
+        name: string
+        collaboration_count: number
+        total_citations: number
+        recent_collaborations: Array<{
+          title: string
+          year: number
+          citations: number
+        }>
+      }>
+      total_papers_analyzed: number
+    }
+    message: string
+  }
+}
+
+export async function searchOpenAlexPapers(params: {
+  title?: string
+  author_name?: string
+  institutions?: string
+  concepts?: string
+  publication_year_start?: number
+  publication_year_end?: number
+  is_oa?: boolean
+  min_citations?: number
+  sort_by?: string
+  per_page?: number
+}) {
+  const { data } = await api.get('/openalex/papers/search', { params })
+  return data as {
+    success: boolean
+    count: number
+    papers: OpenAlexPaper[]
+    query_parameters: any
+    message: string
+  }
+}
+
+export async function getTrendingPapers(params: {
+  research_areas?: string
+  time_period?: number
+  min_citations?: number
+  per_page?: number
+}) {
+  const { data } = await api.get('/openalex/papers/trending', { params })
+  return data as {
+    success: boolean
+    count: number
+    trending_papers: OpenAlexPaper[]
+    query_parameters: any
+    message: string
+  }
+}
+
+export async function searchOpenAlexInstitutions(params: {
+  query: string
+  country?: string
+  institution_type?: string
+  per_page?: number
+}) {
+  const { data } = await api.get('/openalex/institutions/search', { params })
+  return data as {
+    success: boolean
+    count: number
+    institutions: OpenAlexInstitution[]
+    message: string
+  }
+}
+
+export async function getInstitutionProfile(params: {
+  name: string
+  years_back?: number
+}) {
+  const { data } = await api.get('/openalex/institutions/profile', { params })
+  return data as {
+    success: boolean
+    institution_profile: {
+      institution: {
+        id: string
+        name: string
+        country: string
+        type: string
+        works_count: number
+        cited_by_count: number
+      }
+      analysis_period: string
+      total_papers: number
+      total_citations: number
+      average_citations: number
+      open_access_ratio: number
+      papers_per_year: Record<string, number>
+      top_research_areas: Array<[string, number]>
+    }
+    message: string
+  }
+}
+
+export async function searchOpenAlexConcepts(params: {
+  query: string
+  level?: number
+  per_page?: number
+}) {
+  const { data } = await api.get('/openalex/concepts/search', { params })
+  return data as {
+    success: boolean
+    count: number
+    concepts: Array<{
+      id: string
+      display_name: string
+      description: string
+      level: number
+      works_count: number
+      cited_by_count: number
+      subfield: any
+      field: any
+      domain: any
+    }>
+    message: string
+  }
 } 

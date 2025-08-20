@@ -1,20 +1,23 @@
-# ArXiv 爬取 + 机构抽取 + 网络搜索 + 最小聊天 + 前端看板
+# ArXiv 爬取 + 机构抽取 + 网络搜索 + OpenAlex 全球学术查询 + 最小聊天 + 前端看板
 
 ## 项目简介
 
 - 从 arXiv 抓取近 N 天论文，写入规范化数据库表（papers/authors/affiliations 等），并为作者抽取机构（PDF 首页 + LLM 映射）。
+- 集成 OpenAlex（全球最大的开放学术数据库）提供全面学术查询能力，支持作者消歧、博士生筛选、跨期刊论文搜索等高级功能。
 - 提供 Tavily 网络搜索功能，可搜索研究人员的详细信息、职位角色等。
 - 支持论文标题和 arXiv ID 的模糊搜索，快速定位相关文献。
 - 提供最小聊天接口（DashScope 兼容 OpenAI）。
 - 提供前端 React 看板（Vite + Ant Design），展示总览、作者检索、网络搜索与最新论文流。
 - 新增 ORCID 富化：基于作者姓名 + 机构相似匹配补全作者 ORCID 与作者-机构的 role/start_date/end_date，支持角色信息完整组合。
 
-技术栈：FastAPI、LangGraph（Send 并行）、psycopg3、requests、pdfplumber、Tavily API、Supabase Python SDK（通用查询）、React + Ant Design、ORCID Public API。
+技术栈：FastAPI、LangGraph（Send 并行）、psycopg3、requests、pdfplumber、Tavily API、Supabase Python SDK（通用查询）、**pyalex（OpenAlex Python SDK）**、React + Ant Design、ORCID Public API。
 
 ## 目录结构
 - `src/agent/graph.py`：最小聊天图（start → chat → end）
 - `src/agent/data_graph.py`：arXiv 抓取 → 并行机构抽取（Send）→ 规范化入库
 - `src/agent/utils.py`：工具函数（arXiv API、PDF 解析、ORCID、QS 排名、Tavily 网络搜索）
+- `src/agent/openalex_utils.py`：OpenAlex 集成工具（全球学术数据查询、作者消歧、博士生筛选）
+- `src/api/openalex_api.py`：OpenAlex API 接口（作者/论文/机构高级搜索）
 - `src/api/graph.py`：聊天 API
 - `src/api/data_processing.py`：抓取 API
 - `src/api/dashboard.py`：看板 API（总览、作者检索、网络搜索、论文搜索）
@@ -44,6 +47,10 @@ TAVILY_API_KEY=你的Tavily API密钥
 ORCID_CLIENT_ID=你的ORCID客户端ID
 ORCID_CLIENT_SECRET=你的ORCID客户端密钥
 
+# OpenAlex API（全球学术数据查询，可选）
+OPENALEX_EMAIL=你的邮箱地址  # 进入 polite pool，获得更快响应速度
+OPENALEX_API_KEY=你的OpenAlex API密钥  # 可选，但有助于提升请求限额
+
 # Supabase Python SDK（通用查询，供看板 API 使用）
 SUPABASE_URL=https://xxxx.supabase.co
 SUPABASE_ANON_KEY=你的Supabase匿名键
@@ -52,6 +59,8 @@ SUPABASE_ANON_KEY=你的Supabase匿名键
 说明：
 - `DATABASE_URL` 可使用 Supabase 提供的 Postgres 连接串或本地 Postgres。
 - `TAVILY_API_KEY` 用于网络搜索功能，可在 [Tavily](https://tavily.com) 获取。
+- `OPENALEX_EMAIL` 用于进入 OpenAlex 的 polite pool，获得更快更稳定的响应速度。
+- `OPENALEX_API_KEY` 可选，但有助于提升 OpenAlex API 的请求限额。
 - 机构抽取依赖 `pdfplumber` 抽取 PDF 首页文本 + LLM 严格 JSON 映射作者 → 机构名，顺序与 arXiv 作者序一致；失败时不阻断流程。
 
 ## 安装与运行（后端）
@@ -61,7 +70,7 @@ SUPABASE_ANON_KEY=你的Supabase匿名键
 ```bash
 pip install .
 # 或手动安装核心依赖
-pip install fastapi uvicorn psycopg3 requests pdfplumber langchain-openai langgraph tavily-python supabase
+pip install fastapi uvicorn psycopg3 requests pdfplumber langchain-openai langgraph tavily-python supabase pyalex
 ```
 
 启动 API 服务：
@@ -146,6 +155,56 @@ curl -X POST \
   - `GET /dashboard/charts/affiliation-paper-count?days=7` - 机构论文数量统计
   - `GET /dashboard/charts/affiliation-author-count?days=7` - 机构作者数量统计
 
+## OpenAlex 全球学术查询 API
+
+基于 OpenAlex（全球最大开放学术数据库）提供的高级学术查询接口，支持跨期刊、跨学科的全面学术数据分析。
+
+### 作者相关接口
+
+- 作者搜索：`GET /openalex/authors/search?name=姓名&institutions=机构&country=国家代码`
+  - 支持按姓名、机构、国家等多维度搜索
+  - 提供作者消歧和机构匹配
+  - 返回学术指标、研究领域、ORCID 等详细信息
+
+- 博士生筛选：`GET /openalex/authors/phd-candidates?institutions=北京大学,清华大学&research_areas=artificial intelligence`
+  - 基于启发式规则筛选疑似博士生
+  - 支持按机构、研究领域、发文量等条件筛选
+  - 提供可能性评分和学术概况分析
+  - 示例实际场景：找到北大、浙大、清华的人工智能方向在读博士
+
+- 合作网络：`GET /openalex/authors/{author_id}/collaboration?limit=50`
+  - 分析作者的合作网络和频繁合作者
+  - 提供合作统计和近期合作论文信息
+
+### 论文相关接口
+
+- 高级论文搜索：`GET /openalex/papers/search`
+  - 参数：`title`, `author_name`, `institutions`, `concepts`, `publication_year_start/end`, `is_oa`, `min_citations`, `sort_by`
+  - 支持多维度筛选：标题、作者、机构、研究领域、年份、开放获取状态、引用数等
+  - 返回完整论文信息、作者列表、机构信息、摘要等
+
+- 趋势论文：`GET /openalex/papers/trending?research_areas=machine learning&time_period=365`
+  - 基于时间窗口和引用增长计算趋势得分
+  - 发现特定领域的热门和新兴论文
+
+### 机构相关接口
+
+- 机构搜索：`GET /openalex/institutions/search?query=机构名&country=CN&institution_type=education`
+  - 支持按名称、国家、机构类型搜索
+  - 返回机构基本信息、学术指标、官网链接等
+
+- 机构研究概况：`GET /openalex/institutions/profile?name=清华大学&years_back=5`
+  - 分析机构的研究概况和学术统计
+  - 包括论文数量、引用统计、开放获取比例、主要研究领域分布
+  - 提供时间序列分析和年度趋势
+
+### 研究概念接口
+
+- 概念搜索：`GET /openalex/concepts/search?query=machine learning&level=2`
+  - 搜索研究概念和学科领域
+  - 支持按层级筛选（0-5级概念体系）
+  - 返回概念描述、论文数量、学科归属等
+
 ## 数据处理流程
 
 ### 整体执行流程
@@ -222,6 +281,12 @@ curl -X POST \
 - 技术栈：Vite + React + TypeScript + Ant Design
 - 功能：
   - **总览卡片**：论文/作者/机构/类别计数统计
+  - **OpenAlex 全球学术查询**（🆕 核心功能）：
+    - **作者搜索**：按姓名、机构、国家等条件搜索全球作者，提供详细学术指标和研究领域
+    - **博士生筛选**：智能筛选指定机构的疑似博士生候选人，支持按研究领域、发文量等条件过滤
+    - **论文高级搜索**：多维度论文检索，支持标题、作者、机构、概念、年份、引用数等复合筛选
+    - **机构分析**：搜索全球学术机构，查看机构研究概况、学术统计和主要研究领域
+    - **合作网络分析**：可视化作者的合作网络和频繁合作者信息
   - **作者搜索**：模糊检索（大小写与空格不敏感），展示 ORCID、机构（含 role/起止/latest）、最近论文、常合作作者，QS 标签含 2025/2024 且显示名次变化箭头
   - **网络搜索工具**：
     - 支持输入人名、机构名和自定义搜索提示词
@@ -234,6 +299,13 @@ curl -X POST \
     - 支持在顶部直接发起抓取（日期范围/类别/上限、或按 ID）
     - 搜索状态下显示匹配数量和筛选提示
 
+### OpenAlex 全球学术查询特色
+
+- **多标签页设计**：作者搜索、博士生查询、论文搜索、机构分析、合作网络五大功能模块
+- **智能博士生筛选**：基于发文量、学术年龄、引用数等启发式规则，自动评分排序
+- **高级论文筛选**：支持开放获取过滤、引用数阈值、多研究领域交叉检索
+- **机构研究画像**：可视化展示机构的论文统计、引用分析、研究领域分布
+- **实时数据交互**：所有查询结果支持分页、排序、详情展开，响应式设计
 ### 网络搜索界面特点
 - **双模式搜索**：通用搜索（自定义问题）+ 专门角色搜索
 - **智能结果展示**：AI 摘要卡片 + 折叠式源链接列表
@@ -264,6 +336,50 @@ curl -X POST \
   ```
 
 ## 使用示例
+
+### OpenAlex 全球学术查询示例
+
+1. **智能博士生筛选**（解决实际需求：找到北大、浙大、清华的人工智能方向在读博士）：
+   ```bash
+   curl -X GET "http://localhost:8000/openalex/authors/phd-candidates" \
+     -G -d "institutions=北京大学,浙江大学,清华大学" \
+     -d "research_areas=artificial intelligence,machine learning,computer science" \
+     -d "country=CN" \
+     -d "min_works=3" \
+     -d "max_works=20"
+   ```
+
+2. **作者消歧和详细信息查询**：
+   ```bash
+   curl -X GET "http://localhost:8000/openalex/authors/search" \
+     -G -d "name=Geoffrey Hinton" \
+     -d "institutions=University of Toronto" \
+     -d "country=CA"
+   ```
+
+3. **跨期刊高级论文搜索**：
+   ```bash
+   curl -X GET "http://localhost:8000/openalex/papers/search" \
+     -G -d "title=transformer attention" \
+     -d "concepts=artificial intelligence,natural language processing" \
+     -d "publication_year_start=2020" \
+     -d "min_citations=50" \
+     -d "is_oa=true" \
+     -d "sort_by=cited_by_count"
+   ```
+
+4. **机构研究概况分析**：
+   ```bash
+   curl -X GET "http://localhost:8000/openalex/institutions/profile" \
+     -G -d "name=清华大学" \
+     -d "years_back=5"
+   ```
+
+5. **合作网络分析**：
+   ```bash
+   curl -X GET "http://localhost:8000/openalex/authors/A2887243803/collaboration" \
+     -G -d "limit=20"
+   ```
 
 ### 网络搜索功能示例
 
@@ -296,14 +412,22 @@ curl -X POST \
 
 ### 前端界面操作
 
-1. **网络搜索工具**：
-   - 在"Web Search Tool"卡片中输入研究人员姓名和机构
+1. **OpenAlex 全球学术查询**：
+   - 在"OpenAlex 全球学术查询系统"卡片中选择相应标签页
+   - **博士生查询**：输入目标机构（如"北京大学,清华大学,浙江大学"）和研究领域，系统会基于启发式规则智能筛选并评分
+   - **作者搜索**：按姓名、机构、国家等条件搜索，查看详细学术指标和研究领域
+   - **论文搜索**：多维度筛选，支持标题、作者、机构、概念、年份、引用数等复合条件
+   - **机构分析**：搜索全球学术机构，查看研究概况和统计数据
+   - **合作网络**：从作者搜索结果中点击"合作网络"按钮，查看作者的学术合作关系
+
+2. **网络搜索工具**：
+   2. **网络搜索工具**：
    - 输入自定义搜索问题，如"What research does"、"Tell me about recent work by"
    - 点击"General Search"获取综合信息，或"Find Role/Position"获取职位信息
    - 查看 AI 摘要和相关网页源链接
 
 2. **论文搜索**：
-   - 在"Latest Papers"中使用搜索栏
+   2. **论文搜索**：
    - 选择搜索类型：论文标题或 arXiv ID
    - 输入关键词后点击"Search"按钮
    - 查看筛选后的论文列表，标题显示匹配数量## 备注
@@ -312,12 +436,19 @@ curl -X POST \
 - ORCID 富化支持灵活更新策略：批量接口用 `only_missing` 参数，单个作者接口用 `overwrite` 参数，可根据需要选择只更新空值或完全覆盖。
 - **网络搜索功能**：需要有效的 `TAVILY_API_KEY`，若未配置则相关功能会提示不可用。搜索结果基于实时网页内容，准确性依赖于网络资源质量。
 - **论文搜索功能**：支持标题的模糊匹配和 arXiv ID 的部分匹配，搜索对大小写不敏感。
+- **OpenAlex 集成功能**（🆕 重要补充）：
+  - OpenAlex 是全球最大的开放学术数据库，覆盖 2.5 亿+论文、1 亿+作者、10 万+机构
+  - 提供强大的作者消歧能力，有效解决同名作者区分问题
+  - 支持跨期刊、跨学科的全面学术分析，弥补单一 arXiv 数据源的不足
+  - 博士生筛选基于启发式规则（发文量、学术年龄、引用模式等），仅供参考，实际判断需结合多方信息
+  - API 请求建议设置 `OPENALEX_EMAIL` 进入 polite pool，获得更稳定的服务
 - **关于 LangGraph 可视化**：LangSmith 中显示的"断开"节点是正常现象，这是由于 `Send` 函数创建的动态并行边在静态图中无法预先显示。实际执行时所有并行任务会正确运行并汇聚。
 
 ---
 如需扩展：
 - 后端：增加 OCR 兜底、机构名规范化、缓存/重试策略、更多搜索数据源集成等
 - 前端：类别分布图、更多筛选与导出功能、搜索历史记录、结果保存等
+- **OpenAlex 深度集成**：引用网络分析、学术影响力评估、研究趋势预测、机构合作网络等高级功能
 
 ## Supabase RLS 策略（开发/看板用）
 

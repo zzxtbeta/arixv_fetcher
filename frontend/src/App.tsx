@@ -3,6 +3,7 @@ import OverviewCards from './components/OverviewCards'
 import AuthorSearch from './components/AuthorSearch'
 import LatestPapers from './components/LatestPapers'
 import WebSearch from './components/WebSearch'
+import OpenAlexSearch from './components/OpenAlexSearch'
 
 const { Header, Content, Footer } = Layout
 
@@ -17,6 +18,9 @@ export default function App() {
         <Row gutter={[16, 16]}>
           <Col xs={24}>
             <OverviewCards />
+          </Col>
+          <Col xs={24}>
+            <OpenAlexSearch />
           </Col>
           <Col xs={24}>
             <AuthorSearch />

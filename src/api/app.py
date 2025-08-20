@@ -18,6 +18,7 @@ from src.agent.data_graph import build_data_processing_graph
 from src.api.graph import router as graph_router
 from src.api.data_processing import router as data_processing_router
 from src.api.dashboard import router as dashboard_router
+from src.api.openalex_api import router as openalex_router
 from src.api.models import ErrorResponse
 
 import logging
@@ -84,6 +85,7 @@ app.add_middleware(
 app.include_router(graph_router)
 app.include_router(data_processing_router)
 app.include_router(dashboard_router)
+app.include_router(openalex_router)
 
 
 @app.exception_handler(Exception)
