@@ -14,6 +14,7 @@ import re
 import json
 from datetime import datetime, timezone, timedelta, time
 from typing import Dict, Any, List, Optional
+from difflib import SequenceMatcher
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
@@ -36,6 +37,7 @@ from src.agent.utils import (
     # Database utilities
     create_schema_if_not_exists
 )
+from src.agent.openalex_utils import get_author_academic_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +80,12 @@ async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) 
                     end_dt = datetime.combine(ed.date(), time(23, 59, tzinfo=timezone.utc))
                     raw = await asyncio.to_thread(search_papers_by_range, categories, start_dt, end_dt, max_results)
                     cats_label = ",".join(categories) if categories else "all"
-                    # logger.info(f"arXiv fetch by range: {start_date} to {end_date}, categories={cats_label}, fetched={len(raw)}")
-                except Exception:
+                    logger.info(f"arXiv fetch by range: {start_date} to {end_date}, categories={cats_label}, fetched={len(raw)}")
+                except Exception as e:
+                    logger.error(f"Error in date range parsing, falling back to window: {e}")
                     raw = await asyncio.to_thread(search_papers_by_window, categories, days, max_results)
                     cats_label = ",".join(categories) if categories else "all"
-                    # logger.info(f"arXiv fetch by window (fallback): days={days}, categories={cats_label}, fetched={len(raw)}")
+                    logger.info(f"arXiv fetch by window (fallback): days={days}, categories={cats_label}, fetched={len(raw)}")
             else:
                 raw = await asyncio.to_thread(search_papers_by_window, categories, days, max_results)
                 cats_label = ",".join(categories) if categories else "all"
@@ -141,7 +144,24 @@ async def process_single_paper(state: Dict[str, Any]) -> Dict[str, Any]:
                         email = None
                 else:
                     email = None
-                mapped.append({"name": name, "affiliations": aff, "email": email})
+                # 获取OpenAlex学术指标
+                academic_metrics = None
+                try:
+                    # 直接使用作者姓名获取学术指标
+                    academic_metrics = await asyncio.to_thread(
+                        get_author_academic_metrics,
+                        name
+                    )
+                    if academic_metrics:
+                        logger.info(f"Retrieved academic metrics for {name}: {academic_metrics}")
+                except Exception as e:
+                    logger.warning(f"Failed to get academic metrics for {name}: {e}")
+                
+                author_entry = {"name": name, "affiliations": aff, "email": email}
+                if academic_metrics:
+                    author_entry["academic_metrics"] = academic_metrics
+                
+                mapped.append(author_entry)
             return {"papers": [{**paper, "author_affiliations": mapped}]}
         except Exception:
             return {"papers": [{**paper, "author_affiliations": []}]}
@@ -303,11 +323,51 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
         enriched["orcid_aff_meta"] = orcid_aff_meta
     return {"papers": [enriched]}
 
+def merge_paper_results(state: DataProcessingState) -> DataProcessingState:
+    """Merge results from process_single_paper and process_orcid_for_paper.
+    
+    This function combines the enriched paper data from both processing nodes
+    to avoid duplicate processing in upsert_papers.
+    """
+    logger.info(f"merge_paper_results called with {len(state.get('papers', []))} papers")
+    papers = state.get("papers", []) or []
+    if not papers:
+        logger.info("No papers to merge, returning state as-is")
+        return state
+    
+    # Group papers by arxiv_entry to merge duplicates
+    paper_map = {}
+    for paper in papers:
+        arxiv_entry = paper.get("id")
+        if not arxiv_entry:
+            continue
+            
+        if arxiv_entry in paper_map:
+            logger.info(f"Merging duplicate paper: {arxiv_entry}")
+            # Merge the paper data
+            existing = paper_map[arxiv_entry]
+            # Merge author_affiliations (from process_single_paper)
+            if "author_affiliations" in paper and "author_affiliations" not in existing:
+                existing["author_affiliations"] = paper["author_affiliations"]
+            # Merge orcid data (from process_orcid_for_paper)
+            if "orcid_by_author" in paper:
+                existing["orcid_by_author"] = paper["orcid_by_author"]
+            if "orcid_aff_meta" in paper:
+                existing["orcid_aff_meta"] = paper["orcid_aff_meta"]
+        else:
+            paper_map[arxiv_entry] = paper.copy()
+    
+    # Return merged papers
+    merged_papers = list(paper_map.values())
+    logger.info(f"Merged {len(papers)} papers into {len(merged_papers)} unique papers")
+    return {**state, "papers": merged_papers}
+
 def dispatch_affiliations(state: DataProcessingState):
     """Dispatch parallel jobs using Send for each paper in `raw_papers`."""
     raw = state.get("raw_papers", []) or []
     if not raw:
-        return []
+        # If no papers to process, go directly to merge_paper_results
+        return [Send("merge_paper_results", state)]
     jobs = []
     for p in raw:
         jobs.append(Send("process_single_paper", {"paper": p}))
@@ -329,7 +389,12 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
 
         
         if not papers_to_process:
-            return {"processing_status": "error", "error_message": "Nothing to upsert"}
+            return {
+                "processing_status": "completed",
+                "inserted": 0,
+                "skipped": 0,
+                "fetched": state.get("fetched", 0)
+            }
         
         db_uri = os.getenv("DATABASE_URL")
         if not db_uri:
@@ -348,6 +413,9 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                 qs_map = get_qs_map()
                 qs_names = get_qs_names()
                 qs_sys_ids = await ensure_qs_ranking_systems(cur)
+                
+                # Global author cache to avoid duplicates across papers
+                author_name_to_id: Dict[str, int] = {}
 
                 for i, p in enumerate(papers_to_process):
                     paper_title = p.get("title")
@@ -408,21 +476,37 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                         continue
 
                     # Authors and author_paper
-                    author_name_to_id: Dict[str, int] = {}
-                    # Build email mapping from author_affiliations
+                    # Build email and academic metrics mapping from author_affiliations
                     author_email_map = {}
+                    author_metrics_map = {}
                     for item in p.get("author_affiliations", []) or []:
                         name = (item.get("name") or "").strip()
                         email = item.get("email")
+                        academic_metrics = item.get("academic_metrics")
                         if name and email:
                             author_email_map[name] = email
+                        if name and academic_metrics:
+                            author_metrics_map[name] = academic_metrics
                     
                     for idx, name_en in enumerate(p.get("authors", []), start=1):
-                        author_id = None
+                        # First check if we already processed this author in current transaction
+                        author_id = author_name_to_id.get(name_en)
+                        if author_id:
+                            # Author already processed, just create the relationship
+                            await cur.execute(
+                                """
+                                INSERT INTO author_paper (author_id, paper_id, author_order, is_corresponding)
+                                VALUES (%s, %s, %s, %s)
+                                ON CONFLICT (author_id, paper_id) DO NOTHING
+                                """,
+                                (author_id, paper_id, idx, False),
+                            )
+                            continue
+                            
                         email = author_email_map.get(name_en)
                         orcid = (p.get("orcid_by_author") or {}).get(name_en)
                         
-                        # First, try to find existing author by email or orcid
+                        # If not in cache, try to find existing author by email or orcid
                         if email:
                             await cur.execute("SELECT id FROM authors WHERE email = %s LIMIT 1", (email,))
                             rowa = await cur.fetchone()
@@ -451,11 +535,22 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                                 except Exception:
                                     pass
                         
+                        # Extract academic metrics if available
+                        citations = h_index = i10_index = None
+                        academic_metrics = author_metrics_map.get(name_en)
+                        if academic_metrics:
+                            citations = academic_metrics.get("citations")
+                            h_index = academic_metrics.get("h_index")
+                            i10_index = academic_metrics.get("i10_index")
+                        
                         # If no existing author found by email or orcid, create new one
                         if not author_id:
                             # Create new author with available information (email and orcid can be NULL)
                             try:
-                                await cur.execute("INSERT INTO authors (author_name_en, email, orcid) VALUES (%s, %s, %s) RETURNING id", (name_en, email, orcid))
+                                await cur.execute(
+                                    "INSERT INTO authors (author_name_en, email, orcid, citations, h_index, i10_index) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id", 
+                                    (name_en, email, orcid, citations, h_index, i10_index)
+                                )
                                 rowa2 = await cur.fetchone()
                                 if rowa2:
                                     author_id = rowa2[0]
@@ -463,6 +558,16 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                                 # Handle unique constraint violations gracefully
                                 logger.warning(f"Failed to insert author {name_en}: {e}")
                                 continue
+                        else:
+                            # Update existing author with academic metrics if available
+                            if academic_metrics:
+                                try:
+                                    await cur.execute(
+                                        "UPDATE authors SET citations = COALESCE(%s, citations), h_index = COALESCE(%s, h_index), i10_index = COALESCE(%s, i10_index) WHERE id = %s",
+                                        (citations, h_index, i10_index, author_id)
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"Failed to update academic metrics for author {name_en}: {e}")
                         
                         if not author_id:
                             continue
@@ -621,8 +726,9 @@ builder = StateGraph(DataProcessingState)
 
 builder.add_node("fetch_arxiv_today", fetch_arxiv_today)
 builder.add_node("process_single_paper", process_single_paper)
-builder.add_node("upsert_papers", upsert_papers)
 builder.add_node("process_orcid_for_paper", process_orcid_for_paper)
+builder.add_node("merge_paper_results", merge_paper_results)
+builder.add_node("upsert_papers", upsert_papers)
 
 builder.add_edge(START, "fetch_arxiv_today")
 # Use conditional edges with Send for parallel map from fetch node
@@ -630,11 +736,10 @@ builder.add_conditional_edges(
     "fetch_arxiv_today",
     dispatch_affiliations,
 )
-# After all Send tasks complete, continue to upsert
-builder.add_edge("fetch_arxiv_today", "upsert_papers")
-# Also connect the Send target to the join so execution waits for all workers
-builder.add_edge("process_single_paper", "upsert_papers")
-builder.add_edge("process_orcid_for_paper", "upsert_papers")
+# Connect the parallel processing nodes to merge, then to upsert
+builder.add_edge("process_single_paper", "merge_paper_results")
+builder.add_edge("process_orcid_for_paper", "merge_paper_results")
+builder.add_edge("merge_paper_results", "upsert_papers")
 
 builder.add_edge("upsert_papers", END)
 

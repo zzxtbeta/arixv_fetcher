@@ -663,6 +663,60 @@ openalex_client = OpenAlexIntegration()
 
 
 # 便捷函数
+def get_author_academic_metrics(
+    author_name: str
+) -> Optional[Dict[str, int]]:
+    """
+    根据作者姓名获取学术指标
+    返回包含 citations, h_index, i10_index 的字典，如果未找到则返回 None
+    """
+    try:
+        # 直接按姓名搜索作者
+        query = openalex_client.authors.search(author_name)
+        results = query.select([
+            "id", "display_name", "orcid", "works_count", "cited_by_count", 
+            "summary_stats", "affiliations", "topics", "last_known_institutions"
+        ]).get(per_page=10)
+        
+        if not results:
+            logger.warning(f"No authors found for {author_name}")
+            return None
+        
+        # 如果有多个结果，选择姓名最匹配的
+        best_match = None
+        best_score = 0
+        
+        for author in results:
+            # 计算姓名匹配度
+            name_similarity = SequenceMatcher(None, 
+                                            author_name.lower(), 
+                                            author.get('display_name', '').lower()).ratio()
+            
+            if name_similarity > best_score:
+                best_score = name_similarity
+                best_match = author
+        
+        if not best_match or best_score < 0.6:  # 最低匹配阈值
+            logger.warning(f"No good match found for {author_name}")
+            return None
+        
+        # 提取学术指标
+        summary_stats = best_match.get('summary_stats', {})
+        
+        metrics = {
+            'citations': best_match.get('cited_by_count', 0),
+            'h_index': summary_stats.get('h_index', 0),
+            'i10_index': summary_stats.get('i10_index', 0)
+        }
+        
+        logger.info(f"Found academic metrics for {author_name}: {metrics}")
+        return metrics
+        
+    except Exception as e:
+        logger.error(f"Error getting academic metrics for {author_name}: {e}")
+        return None
+
+
 def search_authors_by_criteria(
     name: Optional[str] = None,
     institutions: Optional[List[str]] = None,

@@ -8,6 +8,7 @@ from typing import Optional, List
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -22,33 +23,41 @@ def _gen_thread_id(prefix: str) -> str:
         return f"{prefix}-{datetime.utcnow().timestamp()}"
 
 
+class FetchArxivRequest(BaseModel):
+    thread_id: Optional[str] = None
+    categories: Optional[str] = None
+    max_results: Optional[int] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
 @router.post("/fetch-arxiv-today")
 async def fetch_arxiv_today_api(
     request: Request,
-    thread_id: Optional[str] = None,
-    categories: Optional[str] = None,
-    max_results: Optional[int] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
+    req_data: FetchArxivRequest,
 ):
     """Fetch arXiv papers by explicit date range or default to the last day window.
     
     Args:
-        thread_id: Optional thread id used by LangGraph checkpointer.
-        categories: Optional comma-separated categories (e.g. "cs.AI,cs.CV"). Use "all" or "*" to include all categories.
-        max_results: Optional max results hint for arXiv query.
-        start_date: Optional start date (YYYY-MM-DD). If missing, defaults to (today - 1 day, UTC).
-        end_date: Optional end date (YYYY-MM-DD). If missing, defaults to today (UTC). End date is inclusive.
+        req_data: Request data containing thread_id, categories, max_results, start_date, end_date
     """
+    logger.info("=== FETCH ARXIV TODAY API CALLED ===")
     try:
         graph = request.app.state.data_processing_graph
-        cfg = {"thread_id": thread_id or _gen_thread_id("arxiv-daily")}
+        cfg = {"thread_id": req_data.thread_id or _gen_thread_id("arxiv-daily")}
+
+        # Extract parameters from request data
+        start_date = req_data.start_date
+        end_date = req_data.end_date
+        categories = req_data.categories
+        max_results = req_data.max_results
 
         # Defaults for date range: [today-1, today] in UTC
-        if not (start_date and end_date):
+        if not start_date or not end_date:
             today = datetime.now(timezone.utc).date()
-            start_date = (today - timedelta(days=1)).isoformat()
-            end_date = today.isoformat()
+            if not start_date:
+                start_date = (today - timedelta(days=1)).isoformat()
+            if not end_date:
+                end_date = today.isoformat()
         
         config = {"configurable": cfg | {"start_date": start_date, "end_date": end_date}}
 
