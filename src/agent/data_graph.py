@@ -420,40 +420,53 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                     for idx, name_en in enumerate(p.get("authors", []), start=1):
                         author_id = None
                         email = author_email_map.get(name_en)
-                        await cur.execute("SELECT id FROM authors WHERE author_name_en = %s LIMIT 1", (name_en,))
-                        rowa = await cur.fetchone()
-                        if rowa:
-                            author_id = rowa[0]
-                            # Update email if we have one and it's not already set
-                            if email:
+                        orcid = (p.get("orcid_by_author") or {}).get(name_en)
+                        
+                        # First, try to find existing author by email or orcid
+                        if email:
+                            await cur.execute("SELECT id FROM authors WHERE email = %s LIMIT 1", (email,))
+                            rowa = await cur.fetchone()
+                            if rowa:
+                                author_id = rowa[0]
+                                # Update name and orcid if we have them
                                 try:
                                     await cur.execute(
-                                        "UPDATE authors SET email = COALESCE(email, %s) WHERE id = %s",
-                                        (email, author_id),
+                                        "UPDATE authors SET author_name_en = COALESCE(author_name_en, %s), orcid = COALESCE(orcid, %s) WHERE id = %s",
+                                        (name_en, orcid, author_id),
                                     )
                                 except Exception:
                                     pass
-                        else:
-                            if email:
-                                await cur.execute("INSERT INTO authors (author_name_en, email) VALUES (%s, %s) RETURNING id", (name_en, email))
-                            else:
-                                await cur.execute("INSERT INTO authors (author_name_en) VALUES (%s) RETURNING id", (name_en,))
-                            rowa2 = await cur.fetchone()
-                            if rowa2:
-                                author_id = rowa2[0]
+                        
+                        if not author_id and orcid:
+                            await cur.execute("SELECT id FROM authors WHERE orcid = %s LIMIT 1", (orcid,))
+                            rowa = await cur.fetchone()
+                            if rowa:
+                                author_id = rowa[0]
+                                # Update name and email if we have them
+                                try:
+                                    await cur.execute(
+                                        "UPDATE authors SET author_name_en = COALESCE(author_name_en, %s), email = COALESCE(email, %s) WHERE id = %s",
+                                        (name_en, email, author_id),
+                                    )
+                                except Exception:
+                                    pass
+                        
+                        # If no existing author found by email or orcid, create new one
+                        if not author_id:
+                            # Create new author with available information (email and orcid can be NULL)
+                            try:
+                                await cur.execute("INSERT INTO authors (author_name_en, email, orcid) VALUES (%s, %s, %s) RETURNING id", (name_en, email, orcid))
+                                rowa2 = await cur.fetchone()
+                                if rowa2:
+                                    author_id = rowa2[0]
+                            except Exception as e:
+                                # Handle unique constraint violations gracefully
+                                logger.warning(f"Failed to insert author {name_en}: {e}")
+                                continue
+                        
                         if not author_id:
                             continue
                         author_name_to_id[name_en] = author_id
-                        # Optional: update authors.orcid if provided by ORCID enrichment
-                        ob = (p.get("orcid_by_author") or {}).get(name_en)
-                        if ob:
-                            try:
-                                await cur.execute(
-                                    "UPDATE authors SET orcid = COALESCE(orcid, %s) WHERE id = %s",
-                                    (ob, author_id),
-                                )
-                            except Exception:
-                                pass
                         await cur.execute(
                             """
                             INSERT INTO author_paper (author_id, paper_id, author_order, is_corresponding)
