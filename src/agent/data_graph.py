@@ -129,11 +129,19 @@ async def process_single_paper(state: Dict[str, Any]) -> Dict[str, Any]:
             content = re.sub(r"^json\n", "", content, flags=re.IGNORECASE).strip()
             data = json.loads(content)
             mapped = []
-            aff_by_name = { (a.get("name") or "").strip(): a.get("affiliations") or [] for a in data.get("authors", []) }
+            author_data_by_name = { (a.get("name") or "").strip(): a for a in data.get("authors", []) }
             for name in authors:
-                aff = aff_by_name.get(name, [])
+                author_info = author_data_by_name.get(name, {})
+                aff = author_info.get("affiliations") or []
                 aff = [s.strip() for s in aff if s and s.strip()]
-                mapped.append({"name": name, "affiliations": aff})
+                email = author_info.get("email")
+                if email and isinstance(email, str):
+                    email = email.strip()
+                    if not email:
+                        email = None
+                else:
+                    email = None
+                mapped.append({"name": name, "affiliations": aff, "email": email})
             return {"papers": [{**paper, "author_affiliations": mapped}]}
         except Exception:
             return {"papers": [{**paper, "author_affiliations": []}]}
@@ -401,14 +409,35 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
 
                     # Authors and author_paper
                     author_name_to_id: Dict[str, int] = {}
+                    # Build email mapping from author_affiliations
+                    author_email_map = {}
+                    for item in p.get("author_affiliations", []) or []:
+                        name = (item.get("name") or "").strip()
+                        email = item.get("email")
+                        if name and email:
+                            author_email_map[name] = email
+                    
                     for idx, name_en in enumerate(p.get("authors", []), start=1):
                         author_id = None
+                        email = author_email_map.get(name_en)
                         await cur.execute("SELECT id FROM authors WHERE author_name_en = %s LIMIT 1", (name_en,))
                         rowa = await cur.fetchone()
                         if rowa:
                             author_id = rowa[0]
+                            # Update email if we have one and it's not already set
+                            if email:
+                                try:
+                                    await cur.execute(
+                                        "UPDATE authors SET email = COALESCE(email, %s) WHERE id = %s",
+                                        (email, author_id),
+                                    )
+                                except Exception:
+                                    pass
                         else:
-                            await cur.execute("INSERT INTO authors (author_name_en) VALUES (%s) RETURNING id", (name_en,))
+                            if email:
+                                await cur.execute("INSERT INTO authors (author_name_en, email) VALUES (%s, %s) RETURNING id", (name_en, email))
+                            else:
+                                await cur.execute("INSERT INTO authors (author_name_en) VALUES (%s) RETURNING id", (name_en,))
                             rowa2 = await cur.fetchone()
                             if rowa2:
                                 author_id = rowa2[0]
