@@ -26,7 +26,7 @@ async def chat_node(state: OverallState, config: RunnableConfig) -> Dict[str, An
     llm = ChatOpenAI(
         model=configurable.model,
         api_key=os.getenv("DASHSCOPE_API_KEY"),
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         temperature=0.5,
     )
     response = await llm.ainvoke([

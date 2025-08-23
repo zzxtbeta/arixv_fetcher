@@ -572,6 +572,14 @@ async def enrich_orcid_for_author(request: Request, author_id: int, overwrite: b
                         updates.append("role = %s")
                         params.append(new_role)
                     
+                    if department and overwrite:
+                        updates.append("department = %s")
+                        params.append(department)
+                    elif department and not overwrite:
+                        # Only update if current department is NULL
+                        updates.append("department = COALESCE(department, %s)")
+                        params.append(department)
+                    
                     if new_start and (overwrite or not current_start):
                         updates.append("start_date = %s")
                         params.append(new_start)
@@ -600,4 +608,4 @@ async def enrich_orcid_for_author(request: Request, author_id: int, overwrite: b
         raise
     except Exception as e:
         logger.error(f"Error in enrich_orcid_for_author: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

@@ -287,7 +287,7 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
             sd = parse_orcid_date(best_aff.get("start_date") or "")
             ed = parse_orcid_date(best_aff.get("end_date") or "")
             norm_key = (" ".join((aff_used or "").split()).replace(" ", "").lower())
-            orcid_aff_meta.setdefault(name, {})[norm_key] = {"role": role, "start_date": sd, "end_date": ed}
+            orcid_aff_meta.setdefault(name, {})[norm_key] = {"role": role, "department": department, "start_date": sd, "end_date": ed}
     enriched = {**paper}
     if orcid_by_author:
         enriched["orcid_by_author"] = orcid_by_author
@@ -311,7 +311,16 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
     DB writes remain in a single node to avoid deadlocks.
     """
     try:
-        if state.get("processing_status") not in ("fetched", "completed"):
+        # Allow upsert if we have papers to process, regardless of current status
+        papers: List[Dict[str, Any]] = state.get("papers", []) or []
+        raw_papers: List[Dict[str, Any]] = state.get("raw_papers", []) or []
+        
+        # Use papers if available, otherwise use raw_papers
+        papers_to_process = papers if papers else raw_papers
+        
+
+        
+        if not papers_to_process:
             return {"processing_status": "error", "error_message": "Nothing to upsert"}
         
         db_uri = os.getenv("DATABASE_URL")
@@ -322,7 +331,7 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
         pool = await DatabaseManager.get_pool()
 
         inserted = 0; skipped = 0
-        papers: List[Dict[str, Any]] = state.get("papers", []) or []
+        # papers variable already defined above
         
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
@@ -332,8 +341,10 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                 qs_names = get_qs_names()
                 qs_sys_ids = await ensure_qs_ranking_systems(cur)
 
-                for p in papers:
+                for i, p in enumerate(papers_to_process):
                     paper_title = p.get("title")
+                    if not paper_title:
+                        continue
                     published_date = iso_to_date(p.get("published_at"))
                     updated_date = iso_to_date(p.get("updated_at"))
                     abstract = p.get("summary")
@@ -375,7 +386,8 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                                     skipped += 1
                                 else:
                                     continue
-                    except Exception:
+                    except Exception as e:
+                        logger.error(f"Error inserting paper {arxiv_entry}: {str(e)}")
                         await cur.execute("SELECT id FROM papers WHERE arxiv_entry = %s LIMIT 1", (arxiv_entry,))
                         rowe = await cur.fetchone()
                         if rowe:
@@ -510,12 +522,21 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                             meta = ((p.get("orcid_aff_meta") or {}).get(name) or {}).get(norm_key)
                             if meta:
                                 role = meta.get("role")
+                                department = meta.get("department")
                                 sd = meta.get("start_date"); ed = meta.get("end_date")
                                 if role:
                                     try:
                                         await cur.execute(
                                             "UPDATE author_affiliation SET role = COALESCE(role, %s) WHERE author_id = %s AND affiliation_id = %s",
                                             (role, author_id, aff_id),
+                                        )
+                                    except Exception:
+                                        pass
+                                if department:
+                                    try:
+                                        await cur.execute(
+                                            "UPDATE author_affiliation SET department = COALESCE(department, %s) WHERE author_id = %s AND affiliation_id = %s",
+                                            (department, author_id, aff_id),
                                         )
                                     except Exception:
                                         pass
@@ -535,6 +556,9 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                                         )
                                     except Exception:
                                         pass
+
+                # Commit the transaction
+                await conn.commit()
 
         return {"processing_status": "completed", "inserted": inserted, "skipped": skipped}
     except Exception as e:

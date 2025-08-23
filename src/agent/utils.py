@@ -175,6 +175,7 @@ def build_search_query(categories: List[str], start_dt: datetime, end_dt: dateti
 def search_papers_by_range(categories: List[str], start_dt: datetime, end_dt: datetime, max_results: int = 200) -> List[Dict[str, Any]]:
     """Search arXiv papers by date range with pagination."""
     search_query = build_search_query(categories, start_dt, end_dt)
+    logger.info(f"arXiv search query: {search_query}")
 
     results: List[Dict[str, Any]] = []
     page_size = min(100, max_results)
@@ -188,15 +189,29 @@ def search_papers_by_range(categories: List[str], start_dt: datetime, end_dt: da
             "sortBy": "submittedDate",
             "sortOrder": "descending",
         }
-        resp = requests.get(ARXIV_QUERY_API, params=params, headers=HTTP_HEADERS, timeout=30)
-        resp.raise_for_status()
-        papers = parse_arxiv_atom(resp.text)
-        if not papers:
-            break
-        results.extend(papers)
-        if len(papers) < params["max_results"]:
-            break
-        start += params["max_results"]
+        try:
+            logger.debug(f"arXiv API request: {ARXIV_QUERY_API} with params {params}")
+            resp = requests.get(ARXIV_QUERY_API, params=params, headers=HTTP_HEADERS, timeout=30)
+            resp.raise_for_status()
+            papers = parse_arxiv_atom(resp.text)
+            logger.info(f"arXiv API returned {len(papers)} papers for page starting at {start}")
+            if not papers:
+                break
+            results.extend(papers)
+            if len(papers) < params["max_results"]:
+                break
+            start += params["max_results"]
+        except requests.exceptions.RequestException as e:
+            logger.error(f"arXiv API request failed: {e}")
+            logger.error(f"Request URL: {ARXIV_QUERY_API}")
+            logger.error(f"Request params: {params}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response text: {e.response.text[:500]}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in arXiv search: {e}")
+            raise
 
     return results[:max_results]
 
@@ -239,7 +254,7 @@ def create_llm():
     return ChatOpenAI(
         model=os.getenv("AFFILIATION_MODEL", os.getenv("QWEN_MODEL", "qwen-max")),
         api_key=os.getenv("DASHSCOPE_API_KEY"),
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         temperature=0.0,
     )
 
@@ -899,7 +914,7 @@ async def ensure_qs_ranking_systems(cur) -> Dict[int, int]:
     for year, name in systems.items():
         await cur.execute(
             "INSERT INTO ranking_systems (system_name, update_frequency) VALUES (%s, %s) ON CONFLICT (system_name) DO NOTHING RETURNING id",
-            (name, "annual"),
+            (name, 1),  # 1 year frequency instead of "annual" string
         )
         row = await cur.fetchone()
         if row and row[0]:
@@ -998,7 +1013,7 @@ async def create_schema_if_not_exists(cur) -> None:
             published DATE,
             updated DATE,
             abstract TEXT,
-            doi VARCHAR(100) UNIQUE,
+            doi TEXT,
             pdf_source TEXT,
             arxiv_entry TEXT UNIQUE,
             UNIQUE (paper_title, published)
@@ -1009,10 +1024,13 @@ async def create_schema_if_not_exists(cur) -> None:
         """
         CREATE TABLE IF NOT EXISTS authors (
             id BIGSERIAL PRIMARY KEY,
-            author_name_en TEXT,
+            author_name_en TEXT NOT NULL,
             author_name_cn TEXT,
-            email VARCHAR(100) UNIQUE,
-            orcid VARCHAR(100) UNIQUE
+            email TEXT UNIQUE,
+            orcid TEXT UNIQUE,
+            citations INT,
+            H_index INT,
+            I10_index INT
         )
         """
     )
@@ -1033,7 +1051,7 @@ async def create_schema_if_not_exists(cur) -> None:
         CREATE TABLE IF NOT EXISTS ranking_systems (
             id BIGSERIAL PRIMARY KEY,
             system_name TEXT UNIQUE,
-            update_frequency VARCHAR(50)
+            update_frequency INT
         )
         """
     )
@@ -1086,6 +1104,7 @@ async def create_schema_if_not_exists(cur) -> None:
             start_date DATE,
             end_date DATE,
             latest_time DATE,
+            department TEXT,
             UNIQUE (author_id, affiliation_id),
             FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE CASCADE,
             FOREIGN KEY (affiliation_id) REFERENCES affiliations(id) ON DELETE CASCADE
@@ -1122,7 +1141,7 @@ async def create_schema_if_not_exists(cur) -> None:
             id BIGSERIAL PRIMARY KEY,
             aff_id INT,
             rank_system_id INT,
-            rank_value VARCHAR(50),
+            rank_value INT,
             rank_year INT,
             UNIQUE (aff_id, rank_system_id, rank_year),
             FOREIGN KEY (aff_id) REFERENCES affiliations(id) ON DELETE CASCADE,
