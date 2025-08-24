@@ -23,5 +23,12 @@ class DataProcessingState(TypedDict, total=False):
     inserted: int
     skipped: int
     categories: List[str]
+    # 断点续传相关字段
+    session_id: Optional[str]  # 处理会话ID
+    resume_mode: bool  # 是否为恢复模式
+    processed_paper_ids: List[str]  # 已处理的论文ID列表
+    failed_paper_ids: List[str]  # 处理失败的论文ID列表
+    api_exhausted: Annotated[bool, lambda x, y: y]  # API额度是否耗尽（取最新值）
+    current_batch_index: int  # 当前批次索引
 
 

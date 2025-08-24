@@ -8,6 +8,7 @@ import time
 import secrets
 import asyncio
 import os
+from functools import lru_cache
 
 from src.db.supabase_client import supabase_client
 from src.agent.utils import orcid_search_and_pick, best_aff_match_for_institution, parse_orcid_date
@@ -41,20 +42,49 @@ def _to_date(value: Any) -> Optional[date]:
     return None
 
 
+# Cache for overview stats (TTL: 5 minutes)
+_overview_cache = {"data": None, "timestamp": 0}
+CACHE_TTL = 300  # 5 minutes
+
+def _get_cached_overview() -> Optional[Dict[str, Any]]:
+    """Get cached overview data if still valid."""
+    current_time = time.time()
+    if (_overview_cache["data"] is not None and 
+        current_time - _overview_cache["timestamp"] < CACHE_TTL):
+        return _overview_cache["data"]
+    return None
+
+def _set_overview_cache(data: Dict[str, Any]) -> None:
+    """Set overview cache with current timestamp."""
+    _overview_cache["data"] = data
+    _overview_cache["timestamp"] = time.time()
+
 @router.get("/overview")
 async def overview_stats() -> Dict[str, Any]:
-    """Return high-level stats for the dashboard."""
+    """Return high-level stats for the dashboard with caching."""
+    # Check cache first
+    cached_data = _get_cached_overview()
+    if cached_data is not None:
+        return cached_data
+    
     try:
+        # Fetch fresh data
         papers = supabase_client.count("papers")
         authors = supabase_client.count("authors")
         affiliations = supabase_client.count("affiliations")
         categories = supabase_client.count("categories")
-        return {
+        
+        data = {
             "papers": papers,
             "authors": authors,
             "affiliations": affiliations,
             "categories": categories,
         }
+        
+        # Cache the result
+        _set_overview_cache(data)
+        return data
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"overview failed: {e}")
 
@@ -513,4 +543,4 @@ async def search_person_role(
         
     except Exception as e:
         print(f"Role search API error: {e}")
-        raise HTTPException(status_code=500, detail=f"Role search failed: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Role search failed: {str(e)}")

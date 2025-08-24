@@ -1164,25 +1164,78 @@ async def create_schema_if_not_exists(cur) -> None:
 
 # ---------------------- Tavily web search utilities ----------------------
 
+# Global variables for API key rotation
+_TAVILY_API_KEYS = [
+    "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",
+    "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", 
+    "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"
+]
+_CURRENT_TAVILY_KEY_INDEX = 0
+_TAVILY_CLIENT_CACHE = {}
+
+def get_next_tavily_api_key() -> Optional[str]:
+    """Get the next available Tavily API key in rotation."""
+    global _CURRENT_TAVILY_KEY_INDEX
+    
+    # First try environment variable if set
+    env_key = os.getenv("TAVILY_API_KEY")
+    if env_key and env_key not in _TAVILY_API_KEYS:
+        return env_key
+    
+    # Use rotation keys
+    if _CURRENT_TAVILY_KEY_INDEX < len(_TAVILY_API_KEYS):
+        key = _TAVILY_API_KEYS[_CURRENT_TAVILY_KEY_INDEX]
+        return key
+    
+    return None
+
+def rotate_tavily_api_key() -> bool:
+    """Rotate to the next Tavily API key. Returns True if rotation successful."""
+    global _CURRENT_TAVILY_KEY_INDEX
+    
+    _CURRENT_TAVILY_KEY_INDEX += 1
+    if _CURRENT_TAVILY_KEY_INDEX < len(_TAVILY_API_KEYS):
+        logger.info(f"Rotated to Tavily API key #{_CURRENT_TAVILY_KEY_INDEX + 1}")
+        return True
+    else:
+        logger.error("All Tavily API keys exhausted")
+        return False
+
+def is_quota_exceeded_error(error_msg: str) -> bool:
+    """Check if the error indicates API quota exceeded."""
+    quota_indicators = [
+        "quota", "limit", "exceeded", "rate limit", 
+        "usage limit", "monthly limit", "daily limit",
+        "429", "too many requests"
+    ]
+    error_lower = str(error_msg).lower()
+    return any(indicator in error_lower for indicator in quota_indicators)
+
 def get_tavily_client() -> Optional[object]:
-    """Get Tavily client instance if available."""
+    """Get Tavily client instance with API key rotation support."""
     if not TAVILY_AVAILABLE:
         logger.warning("Tavily client not available. Please install: pip install tavily-python")
         return None
     
-    api_key = os.getenv("TAVILY_API_KEY")
+    api_key = get_next_tavily_api_key()
     if not api_key:
-        logger.warning("TAVILY_API_KEY not found in environment")
+        logger.warning("No Tavily API keys available")
         return None
     
+    # Use cached client if available
+    if api_key in _TAVILY_CLIENT_CACHE:
+        return _TAVILY_CLIENT_CACHE[api_key]
+    
     try:
-        return TavilyClient(api_key)
+        client = TavilyClient(api_key)
+        _TAVILY_CLIENT_CACHE[api_key] = client
+        return client
     except Exception as e:
-        logger.error(f"Failed to create Tavily client: {e}")
+        logger.error(f"Failed to create Tavily client with key {api_key[:10]}...: {e}")
         return None
 
 def search_person_role_with_tavily(name: str, affiliation: str) -> Optional[Dict[str, Any]]:
-    """Search for person's role information using Tavily web search.
+    """Search for person's role information using Tavily web search with API key rotation.
     
     Args:
         name: Person's full name
@@ -1195,48 +1248,67 @@ def search_person_role_with_tavily(name: str, affiliation: str) -> Optional[Dict
         logger.warning("Name and affiliation are required for Tavily search")
         return None
     
-    client = get_tavily_client()
-    if not client:
-        return None
-    
     query = f"What is {name}'s role position job title at {affiliation}?"
     logger.info(f"Tavily searching: {query}")
     
-    try:
-        response = client.search(
-            query=query,
-            search_depth="advanced",
-            include_answer="advanced",
-            max_results=5,
-            include_domains=None,
-            exclude_domains=None
-        )
-        
-        # Extract relevant information
-        answer = response.get('answer', '')
-        results = response.get('results', [])
-        
-        # Use LLM to extract role from search results
-        extracted_role = _extract_role_with_llm(name, affiliation, answer, results)
-        
-        return {
-            "query": query,
-            "answer": answer,
-            "results": results,
-            "extracted_role": extracted_role,
-            "search_successful": True
-        }
-        
-    except Exception as e:
-        logger.error(f"Tavily search error: {e}")
-        return {
-            "query": query,
-            "error": str(e),
-            "search_successful": False
-        }
+    # Try with current API key, rotate if quota exceeded
+    max_retries = len(_TAVILY_API_KEYS)
+    for attempt in range(max_retries):
+        client = get_tavily_client()
+        if not client:
+            logger.warning(f"No Tavily client available on attempt {attempt + 1}")
+            continue
+            
+        try:
+            response = client.search(
+                query=query,
+                search_depth="advanced",
+                include_answer="advanced",
+                max_results=5,
+                include_domains=None,
+                exclude_domains=None
+            )
+            
+            # Extract relevant information
+            answer = response.get('answer', '')
+            results = response.get('results', [])
+            
+            # Use LLM to extract role from search results
+            extracted_role = _extract_role_with_llm(name, affiliation, answer, results)
+            
+            return {
+                "query": query,
+                "answer": answer,
+                "results": results,
+                "extracted_role": extracted_role,
+                "search_successful": True
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Tavily search error on attempt {attempt + 1}: {error_msg}")
+            
+            # Check if it's a quota exceeded error
+            if is_quota_exceeded_error(error_msg):
+                logger.warning(f"API quota exceeded, attempting to rotate to next key")
+                if rotate_tavily_api_key():
+                    continue  # Try with next API key
+                else:
+                    logger.error("All Tavily API keys exhausted")
+                    break
+            else:
+                # Non-quota error, don't retry
+                break
+    
+    # All attempts failed
+    return {
+        "query": query,
+        "error": "All Tavily API attempts failed",
+        "search_successful": False
+    }
 
 def search_person_general_with_tavily(name: str, affiliation: str, search_prompt: str) -> Optional[Dict[str, Any]]:
-    """General Tavily web search for person information with custom prompt.
+    """General Tavily web search for person information with custom prompt and API key rotation.
     
     Args:
         name: Person's full name
@@ -1250,36 +1322,55 @@ def search_person_general_with_tavily(name: str, affiliation: str, search_prompt
         logger.warning("Name, affiliation, and search prompt are required")
         return None
     
-    client = get_tavily_client()
-    if not client:
-        return None
-    
     # Format the query with person and affiliation context
     query = f"{search_prompt} {name} {affiliation}"
     logger.info(f"Tavily searching: {query}")
     
-    try:
-        response = client.search(
-            query=query,
-            search_depth="advanced",
-            include_answer="advanced",
-            max_results=8,
-            include_domains=None,
-            exclude_domains=None
-        )
-        
-        return {
-            "query": query,
-            "answer": response.get('answer', ''),
-            "results": response.get('results', []),
-            "search_successful": True,
-            "person_name": name,
-            "affiliation": affiliation,
-            "search_prompt": search_prompt
-        }
-        
-    except Exception as e:
-        logger.error(f"Tavily search error: {e}")
+    # Try with current API key, rotate if quota exceeded
+    max_retries = len(_TAVILY_API_KEYS)
+    for attempt in range(max_retries):
+        client = get_tavily_client()
+        if not client:
+            logger.warning(f"No Tavily client available on attempt {attempt + 1}")
+            continue
+            
+        try:
+            response = client.search(
+                query=query,
+                search_depth="advanced",
+                include_answer="advanced",
+                max_results=8,
+                include_domains=None,
+                exclude_domains=None
+            )
+            
+            return {
+                "query": query,
+                "answer": response.get('answer', ''),
+                "results": response.get('results', []),
+                "search_successful": True,
+                "person_name": name,
+                "affiliation": affiliation,
+                "search_prompt": search_prompt
+            }
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Tavily search error on attempt {attempt + 1}: {error_msg}")
+            
+            # Check if it's a quota exceeded error
+            if is_quota_exceeded_error(error_msg):
+                logger.warning(f"API quota exceeded, attempting to rotate to next key")
+                if rotate_tavily_api_key():
+                    continue  # Try with next API key
+                else:
+                    logger.error("All Tavily API keys exhausted")
+                    break
+            else:
+                # Non-quota error, don't retry
+                break
+    
+    # All attempts failed
         return {
             "query": query,
             "error": str(e),

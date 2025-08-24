@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel
 
+from src.agent.resume_manager import resume_manager
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/data", tags=["data-processing"])
@@ -122,40 +124,104 @@ async def fetch_arxiv_by_id_api(
     request: Request,
     ids: str,
     thread_id: Optional[str] = None,
+    resume_session_id: Optional[str] = Query(None, description="Resume from existing session ID"),
 ):
     """Fetch arXiv papers by explicit arXiv IDs and persist them.
 
     Args:
         ids: Comma-separated arXiv IDs (e.g. "2504.14636,2504.14645").
         thread_id: Optional thread id used by LangGraph checkpointer.
+        resume_session_id: Optional session ID to resume from previous processing.
     """
     try:
-        id_list: List[str] = [s.strip() for s in (ids or "").split(",") if s.strip()]
-        if not id_list:
-            raise HTTPException(status_code=400, detail="ids is required (comma-separated arXiv IDs)")
+        # 处理恢复模式
+        if resume_session_id:
+            session = resume_manager.get_session(resume_session_id)
+            if not session:
+                raise HTTPException(status_code=404, detail=f"Session {resume_session_id} not found")
+            
+            if session.status == "completed":
+                return {
+                    "status": "already_completed",
+                    "session_id": resume_session_id,
+                    "inserted": session.total_inserted,
+                    "skipped": session.total_skipped,
+                    "fetched": session.total_papers,
+                    "message": "Session already completed"
+                }
+            
+            # 获取待处理的论文ID
+            pending_ids = resume_manager.get_pending_paper_ids(resume_session_id)
+            if not pending_ids:
+                return {
+                    "status": "no_pending_papers",
+                    "session_id": resume_session_id,
+                    "message": "No pending papers to process"
+                }
+            
+            id_list = pending_ids
+            logger.info(f"Resuming session {resume_session_id} with {len(id_list)} pending papers")
+        else:
+            # 新的处理请求
+            id_list: List[str] = [s.strip() for s in (ids or "").split(",") if s.strip()]
+            if not id_list:
+                raise HTTPException(status_code=400, detail="ids is required (comma-separated arXiv IDs)")
+            
+            # 创建新的会话
+            session_id = resume_manager.create_session(
+                source_file="api_upload",
+                paper_ids=id_list
+            )
+            logger.info(f"Created new session {session_id} for {len(id_list)} papers")
 
         graph = request.app.state.data_processing_graph
-        config = {"configurable": {"thread_id": thread_id or _gen_thread_id("arxiv-by-id"), "id_list": id_list}}
+        actual_thread_id = thread_id or _gen_thread_id("arxiv-by-id")
+        
+        # 配置包含会话信息
+        config = {
+            "configurable": {
+                "thread_id": actual_thread_id,
+                "id_list": id_list,
+                "session_id": resume_session_id or session_id,
+                "resume_mode": resume_session_id is not None
+            }
+        }
 
         preview = ",".join(id_list[:5]) + ("..." if len(id_list) > 5 else "")
-        logger.info(f"API fetch-arxiv-by-id: thread_id={config['configurable']['thread_id']}, ids_count={len(id_list)}, ids_sample={preview}")
+        logger.info(f"API fetch-arxiv-by-id: thread_id={actual_thread_id}, ids_count={len(id_list)}, ids_sample={preview}, session_id={config['configurable']['session_id']}")
 
         result = await graph.ainvoke({}, config=config)
             
         status = result.get("processing_status")
-        logger.info(f"API fetch-arxiv-by-id done: status={status}, fetched={result.get('fetched', 0)}, inserted={result.get('inserted', 0)}, skipped={result.get('skipped', 0)}")
+        session_id_used = config['configurable']['session_id']
+        
+        logger.info(f"API fetch-arxiv-by-id done: status={status}, fetched={result.get('fetched', 0)}, inserted={result.get('inserted', 0)}, skipped={result.get('skipped', 0)}, session_id={session_id_used}")
+        
+        # 根据处理状态返回不同响应
         if status == "completed":
-                return {
-                    "status": "success",
+            return {
+                "status": "success",
+                "session_id": session_id_used,
                 "inserted": result.get("inserted", 0),
                 "skipped": result.get("skipped", 0),
                 "fetched": result.get("fetched", 0),
             }
-        if status == "error":
+        elif status == "api_quota_exhausted":
+            return {
+                "status": "api_quota_exhausted",
+                "session_id": session_id_used,
+                "inserted": result.get("inserted", 0),
+                "skipped": result.get("skipped", 0),
+                "fetched": result.get("fetched", 0),
+                "message": "Tavily API quota exhausted. Use the session_id to resume processing later.",
+                "resume_endpoint": f"/data/fetch-arxiv-by-id?resume_session_id={session_id_used}"
+            }
+        elif status == "error":
             raise HTTPException(status_code=500, detail=result.get("error_message", "unknown error"))
 
         return {
             "status": "ok",
+            "session_id": session_id_used,
             "message": f"graph finished with status={status}",
             "inserted": result.get("inserted", 0),
             "skipped": result.get("skipped", 0),
@@ -166,6 +232,112 @@ async def fetch_arxiv_by_id_api(
     except Exception as e:
         logger.error(f"Error in fetch_arxiv_by_id_api: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}") 
+
+
+# ---------------- Resume Management Endpoints ----------------
+
+@router.get("/sessions")
+async def list_sessions():
+    """List all processing sessions."""
+    try:
+        sessions = resume_manager.list_sessions()
+        return {
+            "status": "success",
+            "sessions": [
+                {
+                    "session_id": session.session_id,
+                    "status": session.status,
+                    "total_papers": session.total_papers,
+                    "completed_papers": len([p for p in session.papers.values() if p.status == "completed"]),
+                    "failed_papers": len([p for p in session.papers.values() if p.status == "failed"]),
+                    "pending_papers": len([p for p in session.papers.values() if p.status == "pending"]),
+                    "total_inserted": session.total_inserted,
+                    "total_skipped": session.total_skipped,
+                    "created_at": session.created_at.isoformat(),
+                    "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+                    "error_message": session.error_message
+                }
+                for session in sessions
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error listing sessions: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.get("/sessions/{session_id}")
+async def get_session_details(session_id: str):
+    """Get detailed information about a specific session."""
+    try:
+        session = resume_manager.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        
+        return {
+            "status": "success",
+            "session": {
+                "session_id": session.session_id,
+                "status": session.status,
+                "total_papers": session.total_papers,
+                "total_inserted": session.total_inserted,
+                "total_skipped": session.total_skipped,
+                "created_at": session.created_at.isoformat(),
+                "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+                "error_message": session.error_message,
+                "papers": {
+                    paper_id: {
+                        "status": paper.status.value,
+                        "error_message": paper.error_message,
+                        "processing_time": paper.processing_time,
+                        "created_at": paper.created_at.isoformat(),
+                        "updated_at": paper.updated_at.isoformat() if paper.updated_at else None
+                    }
+                    for paper_id, paper in session.papers.items()
+                }
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting session details: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a processing session."""
+    try:
+        success = resume_manager.delete_session(session_id)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        
+        return {
+            "status": "success",
+            "message": f"Session {session_id} deleted successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting session: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@router.get("/sessions/{session_id}/pending-papers")
+async def get_pending_papers(session_id: str):
+    """Get list of pending paper IDs for a session."""
+    try:
+        pending_ids = resume_manager.get_pending_paper_ids(session_id)
+        if pending_ids is None:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        
+        return {
+            "status": "success",
+            "session_id": session_id,
+            "pending_paper_ids": pending_ids,
+            "count": len(pending_ids)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting pending papers: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 # ---------------- Enrichment endpoint for existing affiliations (QS) ----------------

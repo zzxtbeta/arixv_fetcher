@@ -126,7 +126,35 @@ class SupabaseClient:
             return []
     
     def count(self, table: str, filters: Optional[Dict[str, Any]] = None) -> int:
-        """Return exact row count for a table with optional equality/in filters."""
+        """Return estimated row count for a table with optional equality/in filters.
+        
+        Uses estimated count for better performance. For exact counts, use count_exact().
+        """
+        try:
+            client = self._ensure()
+            # Use estimated count for better performance
+            q = client.table(table).select("id", count="estimated")
+            if filters:
+                for k, v in filters.items():
+                    if isinstance(v, (list, tuple)):
+                        q = q.in_(k, list(v))
+                    elif v is None:
+                        q = q.is_(k, None)
+                    else:
+                        q = q.eq(k, v)
+            # limit small to reduce payload
+            q = q.limit(1)
+            resp = q.execute()
+            return int(getattr(resp, "count", 0) or 0)
+        except Exception as e:
+            logger.error(f"Supabase count failed: {e}")
+            return 0
+    
+    def count_exact(self, table: str, filters: Optional[Dict[str, Any]] = None) -> int:
+        """Return exact row count for a table with optional equality/in filters.
+        
+        Warning: This can be slow on large tables. Use count() for estimated counts.
+        """
         try:
             client = self._ensure()
             q = client.table(table).select("id", count="exact")
@@ -143,7 +171,7 @@ class SupabaseClient:
             resp = q.execute()
             return int(getattr(resp, "count", 0) or 0)
         except Exception as e:
-            logger.error(f"Supabase count failed: {e}")
+            logger.error(f"Supabase count_exact failed: {e}")
             return 0
 
     def insert(self, table: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

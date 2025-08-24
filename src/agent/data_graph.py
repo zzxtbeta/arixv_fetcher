@@ -39,6 +39,7 @@ from src.agent.utils import (
     # Tavily utilities
     search_person_role_with_tavily
 )
+from src.agent.resume_manager import resume_manager, ProcessingStatus
 from src.agent.openalex_utils import get_author_academic_metrics
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,11 @@ async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) 
     """Fetch latest papers from arXiv by date window, explicit date range or id_list."""
     try:
         cfg = config.get("configurable", {}) if isinstance(config, dict) else {}
+        
+        # 检查是否为恢复模式
+        session_id = cfg.get("session_id")
+        resume_mode = cfg.get("resume_mode", False)
+        
         # Optional id_list overrides window/range query
         id_list = cfg.get("id_list")
         if isinstance(id_list, str):
@@ -68,6 +74,36 @@ async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) 
         max_results: int = int(cfg.get("max_results", 200))
         start_date: Optional[str] = cfg.get("start_date")
         end_date: Optional[str] = cfg.get("end_date")
+        
+        # 如果是恢复模式，只处理待处理的论文
+        if resume_mode and session_id:
+            pending_papers = resume_manager.get_pending_papers(session_id)
+            if pending_papers:
+                id_list = pending_papers
+                logger.info(f"Resume mode: processing {len(pending_papers)} pending papers")
+            else:
+                logger.info("Resume mode: no pending papers found")
+                return {
+                    "processing_status": "completed",
+                    "raw_papers": [],
+                    "fetched": 0,
+                    "papers": [],
+                    "categories": categories,
+                    "session_id": session_id,
+                    "resume_mode": resume_mode,
+                    "processed_paper_ids": [],
+                    "failed_paper_ids": [],
+                    "api_exhausted": False,
+                    "current_batch_index": 0
+                }
+        
+        # 如果是新的批量处理且有id_list，创建会话
+        if id_list and not session_id:
+            session_id = resume_manager.create_session(
+                source_file=cfg.get("source_file", "unknown"),
+                paper_ids=id_list
+            )
+            logger.info(f"Created new processing session: {session_id}")
 
         if id_list:
             raw = await asyncio.to_thread(search_papers_by_ids, id_list)
@@ -92,6 +128,7 @@ async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) 
                 raw = await asyncio.to_thread(search_papers_by_window, categories, days, max_results)
                 cats_label = ",".join(categories) if categories else "all"
                 logger.info(f"arXiv fetch by window: days={days}, categories={cats_label}, fetched={len(raw)}")
+        
         return {
             "processing_status": "fetched",
             "raw_papers": raw,
@@ -99,6 +136,12 @@ async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) 
             # initialize accumulator for parallel map
             "papers": [],
             "categories": categories,
+            "session_id": session_id,
+            "resume_mode": resume_mode,
+            "processed_paper_ids": [],
+            "failed_paper_ids": [],
+            "api_exhausted": False,
+            "current_batch_index": 0
         }
     except Exception as e:
         return {"processing_status": "error", "error_message": str(e)}
@@ -109,64 +152,106 @@ async def process_single_paper(state: Dict[str, Any]) -> Dict[str, Any]:
     Input state must contain key `paper`. Returns {"papers": [enriched_paper]}.
     """
     paper = state.get("paper", {})
+    paper_id = paper.get("id", "unknown")
     title = (paper.get("title") or "(untitled)").strip()
     pub_label = iso_to_date(paper.get("published_at")) or "unknown"
+    session_id = state.get("session_id")
+    
+    start_time = datetime.now(timezone.utc)
     logger.info(f"Processing paper: '{title}' (published: {pub_label})")
 
     authors = paper.get("authors", [])
     pdf_url = paper.get("pdf_url")
+    
+    # 更新论文状态为处理中
+    if session_id:
+        resume_manager.update_paper_status(session_id, paper_id, ProcessingStatus.IN_PROGRESS)
+    
     if not authors or not pdf_url:
+        if session_id:
+            resume_manager.update_paper_status(session_id, paper_id, ProcessingStatus.COMPLETED)
         return {"papers": [{**paper, "author_affiliations": []}]}
 
-    async with _AFF_SEM:
-        first_page_text = await asyncio.to_thread(download_first_page_text_with_retries, pdf_url)
-        if not first_page_text:
-            return {"papers": [{**paper, "author_affiliations": []}]}
-
-        llm = create_llm()
-        user_prompt = build_affiliation_user_prompt(authors, first_page_text)
-        try:
-            resp = await llm.ainvoke([
-                SystemMessage(content=AFFILIATION_SYSTEM_PROMPT),
-                HumanMessage(content=user_prompt),
-            ])
-            content = resp.content.strip().strip("`")
-            content = re.sub(r"^json\n", "", content, flags=re.IGNORECASE).strip()
-            data = json.loads(content)
-            mapped = []
-            author_data_by_name = { (a.get("name") or "").strip(): a for a in data.get("authors", []) }
-            for name in authors:
-                author_info = author_data_by_name.get(name, {})
-                aff = author_info.get("affiliations") or []
-                aff = [s.strip() for s in aff if s and s.strip()]
-                email = author_info.get("email")
-                if email and isinstance(email, str):
-                    email = email.strip()
-                    if not email:
-                        email = None
-                else:
-                    email = None
-                # 获取OpenAlex学术指标
-                academic_metrics = None
-                try:
-                    # 直接使用作者姓名获取学术指标
-                    academic_metrics = await asyncio.to_thread(
-                        get_author_academic_metrics,
-                        name
+    try:
+        async with _AFF_SEM:
+            first_page_text = await asyncio.to_thread(download_first_page_text_with_retries, pdf_url)
+            if not first_page_text:
+                if session_id:
+                    resume_manager.update_paper_status(
+                        session_id, paper_id, ProcessingStatus.FAILED, 
+                        error_message="Failed to download PDF first page"
                     )
+                return {"papers": [{**paper, "author_affiliations": []}]}
+
+            llm = create_llm()
+            user_prompt = build_affiliation_user_prompt(authors, first_page_text)
+            try:
+                resp = await llm.ainvoke([
+                    SystemMessage(content=AFFILIATION_SYSTEM_PROMPT),
+                    HumanMessage(content=user_prompt),
+                ])
+                content = resp.content.strip().strip("`")
+                content = re.sub(r"^json\n", "", content, flags=re.IGNORECASE).strip()
+                data = json.loads(content)
+                mapped = []
+                author_data_by_name = { (a.get("name") or "").strip(): a for a in data.get("authors", []) }
+                for name in authors:
+                    author_info = author_data_by_name.get(name, {})
+                    aff = author_info.get("affiliations") or []
+                    aff = [s.strip() for s in aff if s and s.strip()]
+                    email = author_info.get("email")
+                    if email and isinstance(email, str):
+                        email = email.strip()
+                        if not email:
+                            email = None
+                    else:
+                        email = None
+                    # 获取OpenAlex学术指标
+                    academic_metrics = None
+                    try:
+                        # 直接使用作者姓名获取学术指标
+                        academic_metrics = await asyncio.to_thread(
+                            get_author_academic_metrics,
+                            name
+                        )
+                        if academic_metrics:
+                            logger.info(f"Retrieved academic metrics for {name}: {academic_metrics}")
+                    except Exception as e:
+                        logger.warning(f"Failed to get academic metrics for {name}: {e}")
+                    
+                    author_entry = {"name": name, "affiliations": aff, "email": email}
                     if academic_metrics:
-                        logger.info(f"Retrieved academic metrics for {name}: {academic_metrics}")
-                except Exception as e:
-                    logger.warning(f"Failed to get academic metrics for {name}: {e}")
+                        author_entry["academic_metrics"] = academic_metrics
+                    
+                    mapped.append(author_entry)
                 
-                author_entry = {"name": name, "affiliations": aff, "email": email}
-                if academic_metrics:
-                    author_entry["academic_metrics"] = academic_metrics
+                # 计算处理时间并更新状态
+                processing_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+                if session_id:
+                    resume_manager.update_paper_status(
+                        session_id, paper_id, ProcessingStatus.COMPLETED,
+                        processing_time=processing_time
+                    )
                 
-                mapped.append(author_entry)
-            return {"papers": [{**paper, "author_affiliations": mapped}]}
-        except Exception:
-            return {"papers": [{**paper, "author_affiliations": []}]}
+                return {"papers": [{**paper, "author_affiliations": mapped}]}
+            except Exception as e:
+                error_msg = f"LLM processing failed: {str(e)}"
+                logger.error(f"Error processing paper {paper_id}: {error_msg}")
+                if session_id:
+                    resume_manager.update_paper_status(
+                        session_id, paper_id, ProcessingStatus.FAILED,
+                        error_message=error_msg
+                    )
+                return {"papers": [{**paper, "author_affiliations": []}]}
+    except Exception as e:
+        error_msg = f"General processing error: {str(e)}"
+        logger.error(f"Error processing paper {paper_id}: {error_msg}")
+        if session_id:
+            resume_manager.update_paper_status(
+                session_id, paper_id, ProcessingStatus.FAILED,
+                error_message=error_msg
+            )
+        return {"papers": [{**paper, "author_affiliations": []}]}
 
 async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
     """Enrich a single paper using ORCID: per author, if ORCID record strictly matches name and
@@ -177,7 +262,9 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
       - orcid_aff_meta: {author_name -> { norm_aff_key -> {role,start_date,end_date} }}
     """
     paper = state.get("paper", {})
+    paper_id = paper.get("id", "unknown")
     paper_title = paper.get("title", "Unknown")
+    session_id = state.get("session_id")
     logger.info(f"Processing ORCID for paper: '{paper_title[:50]}...'")
     
     authors = paper.get("authors", []) or []
@@ -189,6 +276,7 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
         return {"papers": [{**paper}]}
     orcid_by_author: Dict[str, str] = {}
     orcid_aff_meta: Dict[str, Dict[str, Dict[str, Optional[str]]]] = {}
+    api_exhausted = False
 
     # Read-only pre-check: if author already has orcid and all current affiliations already
     # have role/start/end (any of them) recorded, skip ORCID lookup for that author.
@@ -353,9 +441,34 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
                     else:
                         logger.info(f"Tavily search failed for {name}")
                 except Exception as e:
-                    logger.error(f"Tavily API error for {name}: {e}")
+                    error_msg = str(e).lower()
+                    # 检测Tavily API额度耗尽
+                    if "quota" in error_msg or "limit" in error_msg or "exceeded" in error_msg:
+                        logger.error(f"Tavily API quota exhausted while processing {name}: {e}")
+                        api_exhausted = True
+                        
+                        # 更新会话状态
+                        if session_id:
+                            resume_manager.update_paper_status(
+                                session_id, paper_id, ProcessingStatus.FAILED,
+                                error_message=f"Tavily API quota exhausted: {str(e)}"
+                            )
+                        
+                        # 返回当前状态，标记API已耗尽
+                        return {
+                            "papers": [paper],
+                            "api_exhausted": True,
+                            "processing_status": "api_quota_exhausted",
+                            "error_message": f"Tavily API quota exhausted while processing author {name}"
+                        }
+                    else:
+                        logger.error(f"Tavily API error for {name}: {e}")
             else:
                 logger.info(f"No affiliation available for Tavily search for {name}")
+        
+        # 如果API已耗尽，停止处理
+        if api_exhausted:
+            break
         
         # Store the affiliation metadata if we have any useful information
         if role or department or sd or ed:
@@ -374,7 +487,7 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
         enriched["orcid_by_author"] = orcid_by_author
     if orcid_aff_meta:
         enriched["orcid_aff_meta"] = orcid_aff_meta
-    return {"papers": [enriched]}
+    return {"papers": [enriched], "api_exhausted": api_exhausted}
 
 def merge_paper_results(state: DataProcessingState) -> DataProcessingState:
     """Merge results from process_single_paper and process_orcid_for_paper.
@@ -384,9 +497,21 @@ def merge_paper_results(state: DataProcessingState) -> DataProcessingState:
     """
     logger.info(f"merge_paper_results called with {len(state.get('papers', []))} papers")
     papers = state.get("papers", []) or []
+    api_exhausted = state.get("api_exhausted", False)
+    
+    # 检查是否有任何论文处理过程中API耗尽
+    for paper_result in papers:
+        if isinstance(paper_result, dict) and paper_result.get("api_exhausted"):
+            api_exhausted = True
+            break
+    
     if not papers:
         logger.info("No papers to merge, returning state as-is")
-        return state
+        result = state.copy()
+        if api_exhausted:
+            result["api_exhausted"] = True
+            result["processing_status"] = "api_quota_exhausted"
+        return result
     
     # Group papers by arxiv_entry to merge duplicates
     paper_map = {}
@@ -412,8 +537,14 @@ def merge_paper_results(state: DataProcessingState) -> DataProcessingState:
     
     # Return merged papers
     merged_papers = list(paper_map.values())
-    logger.info(f"Merged {len(papers)} papers into {len(merged_papers)} unique papers")
-    return {**state, "papers": merged_papers}
+    logger.info(f"Merged {len(papers)} papers into {len(merged_papers)} unique papers, API exhausted: {api_exhausted}")
+    
+    result = {**state, "papers": merged_papers}
+    if api_exhausted:
+        result["api_exhausted"] = True
+        result["processing_status"] = "api_quota_exhausted"
+    
+    return result
 
 def dispatch_affiliations(state: DataProcessingState):
     """Dispatch parallel jobs using Send for each paper in `raw_papers`."""
@@ -452,19 +583,22 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
         # Allow upsert if we have papers to process, regardless of current status
         papers: List[Dict[str, Any]] = state.get("papers", []) or []
         raw_papers: List[Dict[str, Any]] = state.get("raw_papers", []) or []
+        session_id = state.get("session_id")
+        api_exhausted = state.get("api_exhausted", False)
         
         # Use papers if available, otherwise use raw_papers
         papers_to_process = papers if papers else raw_papers
         
-
-        
         if not papers_to_process:
-            return {
+            result = {
                 "processing_status": "completed",
                 "inserted": 0,
                 "skipped": 0,
                 "fetched": state.get("fetched", 0)
             }
+            if api_exhausted:
+                result["processing_status"] = "api_quota_exhausted"
+            return result
         
         db_uri = os.getenv("DATABASE_URL")
         if not db_uri:
@@ -787,9 +921,44 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                 # Commit the transaction
                 await conn.commit()
 
-        return {"processing_status": "completed", "inserted": inserted, "skipped": skipped}
+        # 保存会话进度
+        if session_id:
+            resume_manager.update_session_progress(
+                session_id,
+                inserted_count=inserted,
+                skipped_count=skipped
+            )
+        
+        # 确定最终状态
+        if api_exhausted:
+            processing_status = "api_quota_exhausted"
+            logger.warning(f"Processing stopped due to API quota exhaustion: {inserted} inserted, {skipped} skipped")
+        else:
+            processing_status = "completed"
+            logger.info(f"Upsert completed: {inserted} inserted, {skipped} skipped")
+        
+        return {
+            "processing_status": processing_status,
+            "inserted": inserted,
+            "skipped": skipped,
+            "api_exhausted": api_exhausted
+        }
     except Exception as e:
-        return {"processing_status": "error", "error_message": str(e)}
+        # 保存错误状态到会话
+        session_id = state.get("session_id")
+        if session_id:
+            resume_manager.update_session_progress(
+                session_id,
+                inserted_count=0,
+                skipped_count=0,
+                error_message=str(e)
+            )
+        
+        return {
+            "processing_status": "error",
+            "error_message": str(e),
+            "api_exhausted": state.get("api_exhausted", False)
+        }
 
 # ---------------------- Graph Construction ----------------------
 
