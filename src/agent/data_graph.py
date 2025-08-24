@@ -35,7 +35,9 @@ from src.agent.utils import (
     # QS utilities
     get_qs_map, get_qs_names, ensure_qs_ranking_systems, enrich_affiliation_from_qs,
     # Database utilities
-    create_schema_if_not_exists
+    create_schema_if_not_exists,
+    # Tavily utilities
+    search_person_role_with_tavily
 )
 from src.agent.openalex_utils import get_author_academic_metrics
 
@@ -175,9 +177,15 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
       - orcid_aff_meta: {author_name -> { norm_aff_key -> {role,start_date,end_date} }}
     """
     paper = state.get("paper", {})
+    paper_title = paper.get("title", "Unknown")
+    logger.info(f"Processing ORCID for paper: '{paper_title[:50]}...'")
+    
     authors = paper.get("authors", []) or []
     aff_map = paper.get("author_affiliations", []) or []
+    logger.info(f"Authors count: {len(authors)}, Author affiliations count: {len(aff_map)}")
+    
     if not authors or not aff_map:
+        logger.info("No authors or affiliations found, skipping ORCID processing")
         return {"papers": [{**paper}]}
     orcid_by_author: Dict[str, str] = {}
     orcid_aff_meta: Dict[str, Dict[str, Dict[str, Optional[str]]]] = {}
@@ -195,7 +203,7 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
         pool = await DatabaseManager.get_pool()
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
-                    for nm in author_names:
+                for nm in author_names:
                         # author basic
                         await cur.execute("SELECT id, orcid FROM authors WHERE author_name_en = %s LIMIT 1", (nm,))
                         row = await cur.fetchone()
@@ -264,11 +272,19 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
         # Fetch strict-name candidates once, then try to match any candidate to any affiliation
         async with _ORCID_SEM:
             cands = await asyncio.to_thread(orcid_candidates_by_name, name, 5)
+        
+        # Try to find ORCID match with institution
         for cand in cands or []:
             for aff in pool_affs:
                 best = best_aff_match_for_institution(aff, cand)
                 if best:
                     return aff, {**cand, "_best": best}
+        
+        # If no ORCID match found but we have candidates, return the first candidate
+        # This allows Tavily fallback to work even when ORCID has no institution data
+        if cands and pool_affs:
+            return pool_affs[0], {**cands[0], "_best": None}
+        
         return None, None
 
     tasks = []
@@ -289,33 +305,70 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
         if not name or not affs:
             continue
         r = results[i]; i += 1
-        if isinstance(r, Exception) or not r:
-            continue
-        aff_used, info = r
-        if not info:
-            continue
-        orcid_id = info.get("orcid_id")
-        if orcid_id:
-            orcid_by_author[name] = orcid_id
-        best_aff = info.get("_best") or best_aff_match_for_institution(aff_used, info)
-        if best_aff:
-            # Combine role and department for complete role information
-            role_title = (best_aff.get("role") or "").strip()
-            department = (best_aff.get("department") or "").strip()
-            
-            if role_title and department:
-                role = f"{role_title} ({department})"
-            elif role_title:
-                role = role_title
-            elif department:
-                role = department
-            else:
-                role = None
+        
+        # Initialize role and department variables
+        role = None
+        department = None
+        sd = None
+        ed = None
+        aff_used = None
+        orcid_found = False
+        
+        # Process ORCID results if available
+        if not isinstance(r, Exception) and r:
+            aff_used, info = r
+            if info:
+                orcid_found = True
+                orcid_id = info.get("orcid_id")
+                if orcid_id:
+                    orcid_by_author[name] = orcid_id
+                best_aff = info.get("_best") or best_aff_match_for_institution(aff_used, info)
                 
-            sd = parse_orcid_date(best_aff.get("start_date") or "")
-            ed = parse_orcid_date(best_aff.get("end_date") or "")
-            norm_key = (" ".join((aff_used or "").split()).replace(" ", "").lower())
-            orcid_aff_meta.setdefault(name, {})[norm_key] = {"role": role, "department": department, "start_date": sd, "end_date": ed}
+                if best_aff:
+                    # Keep role and department separate for proper database storage
+                    role = (best_aff.get("role") or "").strip() or None
+                    department = (best_aff.get("department") or "").strip() or None
+                        
+                    sd = parse_orcid_date(best_aff.get("start_date") or "")
+                    ed = parse_orcid_date(best_aff.get("end_date") or "")
+        
+        # If no role found (either ORCID not found or ORCID found but no role), try Tavily API
+        if not role:
+            # Use aff_used if available from ORCID, otherwise use the first affiliation from the paper
+            search_aff = aff_used or (affs[0] if affs else None)
+            if search_aff:
+                logger.info(f"Trying Tavily API for {name} at {search_aff} (ORCID found: {orcid_found})")
+                try:
+                    tavily_result = await asyncio.to_thread(search_person_role_with_tavily, name, search_aff)
+                    if tavily_result and tavily_result.get("search_successful"):
+                        extracted_role = tavily_result.get("extracted_role")
+                        if extracted_role:
+                            role = extracted_role.strip()
+                            logger.info(f"Tavily found role for {name}: {role}")
+                            # If we didn't have aff_used from ORCID, use the search affiliation
+                            if not aff_used:
+                                aff_used = search_aff
+                        else:
+                            logger.info(f"Tavily search successful but no role extracted for {name}")
+                    else:
+                        logger.info(f"Tavily search failed for {name}")
+                except Exception as e:
+                    logger.error(f"Tavily API error for {name}: {e}")
+            else:
+                logger.info(f"No affiliation available for Tavily search for {name}")
+        
+        # Store the affiliation metadata if we have any useful information
+        if role or department or sd or ed:
+            # Use consistent normalization logic with upsert_papers
+            cleaned_aff = " ".join((aff_used or "").split())
+            norm_key = cleaned_aff.replace(" ", "").lower()
+            orcid_aff_meta.setdefault(name, {})[norm_key] = {
+                "role": role, 
+                "department": department, 
+                "start_date": sd, 
+                "end_date": ed
+            }
+            logger.info(f"Stored metadata for {name} at {cleaned_aff}: role={role}, dept={department}")
     enriched = {**paper}
     if orcid_by_author:
         enriched["orcid_by_author"] = orcid_by_author
@@ -371,7 +424,24 @@ def dispatch_affiliations(state: DataProcessingState):
     jobs = []
     for p in raw:
         jobs.append(Send("process_single_paper", {"paper": p}))
-        jobs.append(Send("process_orcid_for_paper", {"paper": p}))
+    return jobs
+
+def dispatch_orcid_processing(state: DataProcessingState):
+    """Dispatch ORCID processing jobs for papers that have author_affiliations."""
+    papers = state.get("papers", []) or []
+    if not papers:
+        return [Send("upsert_papers", state)]
+    
+    jobs = []
+    for paper in papers:
+        # Only process papers that have author_affiliations
+        if paper.get("author_affiliations"):
+            jobs.append(Send("process_orcid_for_paper", {"paper": paper}))
+    
+    if not jobs:
+        # No papers need ORCID processing, go directly to upsert
+        return [Send("upsert_papers", state)]
+    
     return jobs
 
 async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> DataProcessingState:
@@ -428,18 +498,24 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                     pdf_source = p.get("pdf_url")
                     arxiv_entry = p.get("id")
 
-                    # Insert paper
+                    # Insert paper with orcid_aff_meta
                     paper_id = None
+                    orcid_aff_meta_json = None
+                    if p.get("orcid_aff_meta"):
+                        import json
+                        orcid_aff_meta_json = json.dumps(p["orcid_aff_meta"])
+                    
                     try:
                         await cur.execute(
                             """
                             INSERT INTO papers (
-                                paper_title, published, updated, abstract, doi, pdf_source, arxiv_entry
-                            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (arxiv_entry) DO NOTHING
+                                paper_title, published, updated, abstract, doi, pdf_source, arxiv_entry, orcid_aff_meta
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (arxiv_entry) DO UPDATE SET
+                                orcid_aff_meta = COALESCE(papers.orcid_aff_meta, EXCLUDED.orcid_aff_meta)
                             RETURNING id
                             """,
-                            (paper_title, published_date, updated_date, abstract, doi, pdf_source, arxiv_entry),
+                            (paper_title, published_date, updated_date, abstract, doi, pdf_source, arxiv_entry, orcid_aff_meta_json),
                         )
                         row = await cur.fetchone()
                         if row and row[0]:
@@ -665,44 +741,48 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                                 """,
                                 (author_id, aff_id, pub_dt),
                             )
-                            # If ORCID meta present for this author-affiliation, update role/start/end conservatively
+                            # If ORCID meta present for this author-affiliation, update role/start/end
                             meta = ((p.get("orcid_aff_meta") or {}).get(name) or {}).get(norm_key)
                             if meta:
                                 role = meta.get("role")
                                 department = meta.get("department")
                                 sd = meta.get("start_date"); ed = meta.get("end_date")
+                                
                                 if role:
                                     try:
                                         await cur.execute(
-                                            "UPDATE author_affiliation SET role = COALESCE(role, %s) WHERE author_id = %s AND affiliation_id = %s",
+                                            "UPDATE author_affiliation SET role = %s WHERE author_id = %s AND affiliation_id = %s",
                                             (role, author_id, aff_id),
                                         )
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        logger.warning(f"Failed to update role for {name}: {e}")
+                                        
                                 if department:
                                     try:
                                         await cur.execute(
-                                            "UPDATE author_affiliation SET department = COALESCE(department, %s) WHERE author_id = %s AND affiliation_id = %s",
+                                            "UPDATE author_affiliation SET department = %s WHERE author_id = %s AND affiliation_id = %s",
                                             (department, author_id, aff_id),
                                         )
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        logger.warning(f"Failed to update department for {name}: {e}")
+                                        
                                 if sd:
                                     try:
                                         await cur.execute(
                                             "UPDATE author_affiliation SET start_date = LEAST(COALESCE(start_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
                                             (sd, sd, author_id, aff_id),
                                         )
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        logger.warning(f"Failed to update start_date for {name}: {e}")
+                                        
                                 if ed:
                                     try:
                                         await cur.execute(
                                             "UPDATE author_affiliation SET end_date = GREATEST(COALESCE(end_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
                                             (ed, ed, author_id, aff_id),
                                         )
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        logger.warning(f"Failed to update end_date for {name}: {e}")
 
                 # Commit the transaction
                 await conn.commit()
@@ -721,11 +801,18 @@ def _route(state: DataProcessingState) -> str:
     if status in {"completed", "error"}:
         return "__end__"
 
+def collect_single_paper_results(state: DataProcessingState) -> DataProcessingState:
+    """Collect results from process_single_paper and prepare for ORCID processing."""
+    papers = state.get("papers", []) or []
+    logger.info(f"Collected {len(papers)} papers from process_single_paper")
+    return state
+
 # Build the state graph
 builder = StateGraph(DataProcessingState)
 
 builder.add_node("fetch_arxiv_today", fetch_arxiv_today)
 builder.add_node("process_single_paper", process_single_paper)
+builder.add_node("collect_single_paper_results", collect_single_paper_results)
 builder.add_node("process_orcid_for_paper", process_orcid_for_paper)
 builder.add_node("merge_paper_results", merge_paper_results)
 builder.add_node("upsert_papers", upsert_papers)
@@ -736,8 +823,13 @@ builder.add_conditional_edges(
     "fetch_arxiv_today",
     dispatch_affiliations,
 )
-# Connect the parallel processing nodes to merge, then to upsert
-builder.add_edge("process_single_paper", "merge_paper_results")
+# Connect process_single_paper to collector, then dispatch ORCID processing
+builder.add_edge("process_single_paper", "collect_single_paper_results")
+builder.add_conditional_edges(
+    "collect_single_paper_results",
+    dispatch_orcid_processing,
+)
+# Connect ORCID processing to merge, then to upsert
 builder.add_edge("process_orcid_for_paper", "merge_paper_results")
 builder.add_edge("merge_paper_results", "upsert_papers")
 
