@@ -7,7 +7,7 @@ import logging
 from typing import Optional, List
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,12 @@ class FetchArxivRequest(BaseModel):
 @router.post("/fetch-arxiv-today")
 async def fetch_arxiv_today_api(
     request: Request,
-    req_data: FetchArxivRequest,
+    req_data: FetchArxivRequest = None,
+    thread_id: Optional[str] = Query(None),
+    categories: Optional[str] = Query(None),
+    max_results: Optional[int] = Query(None),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
 ):
     """Fetch arXiv papers by explicit date range or default to the last day window.
     
@@ -43,13 +48,20 @@ async def fetch_arxiv_today_api(
     logger.info("=== FETCH ARXIV TODAY API CALLED ===")
     try:
         graph = request.app.state.data_processing_graph
-        cfg = {"thread_id": req_data.thread_id or _gen_thread_id("arxiv-daily")}
+        # Use query parameters first, fallback to request body
+        final_thread_id = thread_id or (req_data.thread_id if req_data else None) or _gen_thread_id("arxiv-daily")
+        final_start_date = start_date or (req_data.start_date if req_data else None)
+        final_end_date = end_date or (req_data.end_date if req_data else None)
+        final_categories = categories or (req_data.categories if req_data else None)
+        final_max_results = max_results or (req_data.max_results if req_data else None)
+        
+        cfg = {"thread_id": final_thread_id}
 
-        # Extract parameters from request data
-        start_date = req_data.start_date
-        end_date = req_data.end_date
-        categories = req_data.categories
-        max_results = req_data.max_results
+        # Extract parameters from merged data
+        start_date = final_start_date
+        end_date = final_end_date
+        categories = final_categories
+        max_results = final_max_results
 
         # Defaults for date range: [today-1, today] in UTC
         if not start_date or not end_date:
