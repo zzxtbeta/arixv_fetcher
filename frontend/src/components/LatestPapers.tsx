@@ -1,4 +1,5 @@
-import { Card, List, Typography, Space, Tag, Pagination, Button, InputNumber, Select, message, Input, DatePicker } from 'antd'
+import { Card, List, Typography, Space, Tag, Pagination, Button, InputNumber, Select, message, Input, DatePicker, Upload } from 'antd'
+import { UploadOutlined } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
 import { getLatestPapers, triggerFetch, triggerFetchById } from '../api'
 import dayjs from 'dayjs'
@@ -22,6 +23,7 @@ export default function LatestPapers() {
 
   const [ids, setIds] = useState('')
   const [fetchingById, setFetchingById] = useState(false)
+  const [fetchingByJson, setFetchingByJson] = useState(false)
 
   const [dateRange, setDateRange] = useState<[string, string]>(() => {
     const today = dayjs().format('YYYY-MM-DD')
@@ -119,6 +121,42 @@ export default function LatestPapers() {
     }
   }
 
+  async function onTriggerByJson(file: File) {
+    setFetchingByJson(true)
+    try {
+      const text = await file.text()
+      const jsonData = JSON.parse(text)
+      
+      if (!Array.isArray(jsonData)) {
+        message.error('JSON file must contain an array of papers')
+        return
+      }
+      
+      const arxivIds = jsonData.map((paper: any) => {
+        if (!paper.id) {
+          throw new Error('Each paper must have an "id" field')
+        }
+        return paper.id
+      }).join(',')
+      
+      if (!arxivIds) {
+        message.warning('No valid arXiv IDs found in the JSON file')
+        return
+      }
+      
+      const res = await triggerFetchById({ ids: arxivIds })
+      message.success(`Fetched=${res.fetched}, Inserted=${res.inserted}, Skipped=${res.skipped}`)
+      setPage(1)
+      // Clear search when refreshing data
+      handleClearSearch()
+      await load()
+    } catch (e: any) {
+      message.error(e?.message || 'Failed to process JSON file')
+    } finally {
+      setFetchingByJson(false)
+    }
+  }
+
   const disabledEndDate = (current: any) => {
     const today = dayjs().endOf('day')
     return current && current > today
@@ -171,6 +209,16 @@ export default function LatestPapers() {
           <Typography.Text type="secondary">Max</Typography.Text>
           <InputNumber min={10} max={200} step={10} value={maxResults} onChange={(v) => setMaxResults(Number(v))} />
           <Button type="primary" loading={fetching} onClick={onTrigger}>Fetch & Refresh</Button>
+          <Upload
+            accept=".json"
+            showUploadList={false}
+            beforeUpload={(file) => {
+              onTriggerByJson(file)
+              return false // Prevent default upload
+            }}
+          >
+            <Button loading={fetchingByJson} icon={<UploadOutlined />}>Upload JSON</Button>
+          </Upload>
           <Typography.Text type="secondary">arXiv ID(s)</Typography.Text>
           <Input placeholder="e.g. 2504.14636,2504.14645" value={ids} onChange={(e) => setIds(e.target.value)} style={{ width: 240 }} />
           <Button loading={fetchingById} onClick={onTriggerById}>Fetch by ID</Button>
@@ -216,4 +264,4 @@ export default function LatestPapers() {
       </div>
     </Card>
   )
-} 
+}
