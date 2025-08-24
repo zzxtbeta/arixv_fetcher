@@ -128,6 +128,13 @@ curl -X POST \
     - `overwrite`：布尔，默认 `false`。为 `true` 时覆盖现有数据；为 `false` 时只更新空值。
   - 示例：`POST /data/enrich-orcid-author?author_id=796&overwrite=true`
 
+- 单个作者 OpenAlex 富化： `POST /data/enrich-openalex-author`
+  - 功能：为指定作者补齐 OpenAlex 学术指标与研究领域信息。
+  - 参数：
+    - `author_id` ：作者 ID（必需）
+    - `overwrite` ：布尔，默认 `false` 。为 `true` 时覆盖现有数据；为 `false` 时只更新空值。
+  - 示例： `POST /data/enrich-openalex-author?author_id=796&overwrite=true`
+
 ### 看板与搜索接口
 
 - 看板总览：`GET /dashboard/overview` - 返回论文/作者/机构/类别总数统计
