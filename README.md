@@ -2,13 +2,17 @@
 
 ## 项目简介
 
-- 从 arXiv 抓取近 N 天论文，写入规范化数据库表（papers/authors/affiliations 等），并为作者抽取机构（PDF 首页 + LLM 映射）。
+- 从 arXiv 抓取近 N 天论文，写入规范化数据库表（papers/authors/affiliations 等），并为作者抽取机构和邮箱（PDF 首页 + LLM 映射）。
+- **🆕 流式处理架构**：采用分批流式处理机制，每批处理10篇论文并实时更新进度，支持大规模数据处理和实时进度反馈。
+- **🆕 智能会话管理**：支持断点续传和会话恢复，处理过程中可随时中断并从上次位置继续，避免重复处理。
 - 集成 OpenAlex（全球最大的开放学术数据库）提供全面学术查询能力，支持作者消歧、博士生筛选、跨期刊论文搜索等高级功能。
 - 提供 Tavily 网络搜索功能，可搜索研究人员的详细信息、职位角色等。
 - 支持论文标题和 arXiv ID 的模糊搜索，快速定位相关文献。
 - 提供最小聊天接口（DashScope 兼容 OpenAI）。
 - 提供前端 React 看板（Vite + Ant Design），展示总览、作者检索、网络搜索与最新论文流。
 - 新增 ORCID 富化：基于作者姓名 + 机构相似匹配补全作者 ORCID 与作者-机构的 role/start_date/end_date，支持角色信息完整组合。
+- 新增 openalex 富化：基于作者姓名 + 机构相似度补全作者citations，h-index和110-index。
+- 新增 tavily 富化：基于作者姓名 + 机构相似度补全作者在所在机构的role。
 
 技术栈：FastAPI、LangGraph（Send 并行）、psycopg3、requests、pdfplumber、Tavily API、Supabase Python SDK（通用查询）、**pyalex（OpenAlex Python SDK）**、React + Ant Design、ORCID Public API。
 
@@ -31,6 +35,8 @@
 
 ## 环境变量
 在项目根目录创建 `.env`，示例：
+
+### 基础服务配置
 
 ```
 # 数据库（后端必需）
@@ -55,6 +61,33 @@ OPENALEX_API_KEY=你的OpenAlex API密钥  # 可选，但有助于提升请求�
 SUPABASE_URL=https://xxxx.supabase.co
 SUPABASE_ANON_KEY=你的Supabase匿名键
 ```
+
+### 🔧 流式处理与并发控制配置
+
+```
+# 批处理配置
+BATCH_SIZE=10                    # 每批处理的论文数量，默认10篇
+
+# 并发控制
+AFFILIATION_MAX_CONCURRENCY=5   # 机构处理最大并发数
+ORCID_MAX_CONCURRENCY=3         # ORCID查询最大并发数
+
+# Tavily API 限制控制
+TAVILY_REQUEST_DELAY=1           # Tavily请求间隔（秒）
+TAVILY_REQUESTS_PER_MINUTE=60    # 每分钟最大请求数
+TAVILY_MAX_CONCURRENCY=2        # Tavily最大并发数
+
+# API 重试配置
+API_MAX_RETRIES=3                # API请求最大重试次数
+API_RETRY_DELAY=2                # 重试间隔（秒）
+```
+
+### 配置说明
+
+- **BATCH_SIZE**：控制流式处理的批次大小，较小值提供更频繁的进度更新，较大值提高处理效率
+- **并发控制参数**：防止API请求过于频繁，避免触发速率限制
+- **Tavily限制参数**：严格控制网络搜索API的使用，避免超出配额
+- **重试配置**：提高系统稳定性，自动处理临时网络错误
 
 说明：
 - `DATABASE_URL` 可使用 Supabase 提供的 Postgres 连接串或本地 Postgres。
@@ -86,7 +119,7 @@ python -m src.main
 
 ### 数据抓取与处理
 
-- 抓取与入库：`POST /data/fetch-arxiv-today`
+- 抓取与入库（流式处理）：`POST /data/fetch-arxiv-today`
   - 查询参数：
     - `thread_id`：LangGraph checkpoint 线程 ID
     - `categories`：逗号分隔，如 `cs.AI,cs.CV`；传 `all|*` 表示不过滤分类
@@ -98,12 +131,57 @@ python -m src.main
 curl -X POST \
   "http://localhost:8000/data/fetch-arxiv-today?thread_id=1&categories=all&max_results=200&start_date=2025-08-11&end_date=2025-08-12"
 ```
-  - 成功响应：
+  - 流式处理响应：
+  ```json
+  {
+    "status": "processing",
+    "thread_id": "1",
+    "batch_info": {
+      "current_batch": 1,
+      "total_batches": 17,
+      "batch_size": 10,
+      "total_papers": 168
+    },
+    "progress": {
+      "completed_batches": 0,
+      "total_progress_percentage": 0,
+      "current_batch_progress": "starting"
+    },
+    "message": "Processing started with streaming batches"
+  }
+  ```
+  - 最终成功响应：
   ```json
   { "status": "success", "inserted": 123, "skipped": 45, "fetched": 168 }
   ```
 
 - 按 ID 抓取与入库：`POST /data/fetch-arxiv-by-id?ids=2504.14636,2504.14645&thread_id=...`
+
+### 流式处理状态查询
+
+- 查询处理状态：`GET /data/processing-status?thread_id=1`
+  - 功能：查询指定线程的流式处理状态和进度
+  - 响应：
+  ```json
+  {
+    "thread_id": "1",
+    "status": "processing",
+    "batch_info": {
+      "current_batch": 5,
+      "total_batches": 17,
+      "batch_size": 10,
+      "total_papers": 168
+    },
+    "progress": {
+      "completed_batches": 4,
+      "total_progress_percentage": 23.5,
+      "current_batch_progress": "processing"
+    },
+    "error": null,
+    "created_at": "2024-01-15T10:30:00Z",
+    "updated_at": "2024-01-15T10:35:00Z"
+  }
+  ```
 
 ### 数据富化接口
 
@@ -214,14 +292,28 @@ curl -X POST \
 
 ## 数据处理流程
 
-### 整体执行流程
+### 🔄 流式处理架构
+
+系统采用分批流式处理机制，将大量论文分成小批次（默认每批10篇）进行处理，实现实时进度反馈和可恢复的处理流程。
+
+### 📊 整体执行流程
 ```
-1. fetch_arxiv_today     → 获取论文列表
+1. fetch_arxiv_today     → 获取论文列表（支持分批流式处理）
+   ├─ 自动分批：按批次大小分割论文列表
+   ├─ 进度跟踪：实时更新处理进度
+   └─ 会话管理：支持断点续传和恢复
 2. dispatch_affiliations → 分发并行处理任务（使用 LangGraph Send）
    ├─ process_single_paper     (并行) → PDF解析 + LLM机构抽取
    └─ process_orcid_for_paper  (并行) → ORCID查询 + 角色信息抽取
-3. upsert_papers         → 汇总并写入数据库
+3. upsert_papers         → 汇总并写入数据库（批量原子操作）
 ```
+
+### 🔧 会话管理机制
+
+- **断点续传**：系统自动保存处理进度，支持从中断点继续
+- **状态跟踪**：详细记录每个批次的处理状态（pending/processing/completed/failed）
+- **错误恢复**：失败的批次可单独重试，不影响已完成的批次
+- **实时反馈**：每批处理完成后立即更新进度，支持大规模数据处理
 
 ### 详细说明
 
@@ -437,7 +529,115 @@ curl -X POST \
    2. **论文搜索**：
    - 选择搜索类型：论文标题或 arXiv ID
    - 输入关键词后点击"Search"按钮
-   - 查看筛选后的论文列表，标题显示匹配数量## 备注
+   - 查看筛选后的论文列表，标题显示匹配数量## 🚀 流式处理使用示例
+
+### 启动流式处理
+
+```bash
+# 启动今日论文抓取（流式处理）
+curl -X POST "http://localhost:8000/data/fetch-arxiv-today?thread_id=demo_session&categories=all&max_results=50"
+```
+
+**响应示例**：
+```json
+{
+  "status": "processing",
+  "thread_id": "demo_session",
+  "batch_info": {
+    "current_batch": 1,
+    "total_batches": 5,
+    "batch_size": 10,
+    "total_papers": 50
+  },
+  "progress": {
+    "completed_batches": 0,
+    "total_progress_percentage": 0,
+    "current_batch_progress": "starting"
+  },
+  "message": "Processing started with streaming batches"
+}
+```
+
+### 实时查询处理状态
+
+```bash
+# 查询处理进度
+curl "http://localhost:8000/data/processing-status?thread_id=demo_session"
+```
+
+**进行中响应**：
+```json
+{
+  "thread_id": "demo_session",
+  "status": "processing",
+  "batch_info": {
+    "current_batch": 3,
+    "total_batches": 5,
+    "batch_size": 10,
+    "total_papers": 50
+  },
+  "progress": {
+    "completed_batches": 2,
+    "total_progress_percentage": 40,
+    "current_batch_progress": "processing"
+  },
+  "error": null,
+  "created_at": "2024-01-15T10:30:00Z",
+  "updated_at": "2024-01-15T10:35:00Z"
+}
+```
+
+**完成响应**：
+```json
+{
+  "thread_id": "demo_session",
+  "status": "completed",
+  "batch_info": {
+    "current_batch": 5,
+    "total_batches": 5,
+    "batch_size": 10,
+    "total_papers": 50
+  },
+  "progress": {
+    "completed_batches": 5,
+    "total_progress_percentage": 100,
+    "current_batch_progress": "completed"
+  },
+  "result": {
+    "inserted": 45,
+    "skipped": 5,
+    "fetched": 50
+  },
+  "error": null
+}
+```
+
+### 断点续传示例
+
+如果处理过程中断，可以使用相同的 `thread_id` 继续处理：
+
+```bash
+# 使用相同的thread_id重新启动，系统会自动从中断点继续
+curl -X POST "http://localhost:8000/data/fetch-arxiv-today?thread_id=demo_session&categories=all&max_results=50"
+```
+
+## 备注
+
+### 流式处理特性
+
+- **实时进度**：每批处理完成后立即更新进度，支持大规模数据处理的实时监控
+- **断点续传**：处理中断后可从上次位置继续，避免重复处理
+- **批次隔离**：单个批次失败不影响其他批次，提高系统稳定性
+- **资源优化**：分批处理减少内存占用，支持处理大量论文
+
+### 抓取响应
+
+- 抓取过程采用流式处理，可通过状态查询API实时监控进度
+- 返回的 `inserted`、`skipped`、`fetched` 分别表示新插入、跳过（已存在）、总抓取的论文数量
+- 建议定期查询处理状态，避免长时间等待
+
+### 其他注意事项
+
 - 若抓取响应 `inserted=0, skipped=0` 且 `fetched>0`：通常是并行聚合/版本不一致或 RLS/权限问题；已将 Send 并行按官方推荐接线并在写库前汇合。Supabase RLS 下请确保 INSERT 策略放行。
 - 若机构为空：可能 PDF 不可抽取或 LLM 返回不规范；已加入短退避重试与严格 JSON 解析，仍失败则为空。
 - ORCID 富化支持灵活更新策略：批量接口用 `only_missing` 参数，单个作者接口用 `overwrite` 参数，可根据需要选择只更新空值或完全覆盖。

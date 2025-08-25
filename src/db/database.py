@@ -130,14 +130,17 @@ class DatabaseManager:
         return cls._instance
 
     @classmethod
-    async def initialize(cls, db_uri: str = None, max_size: int = 20) -> None:
+    async def initialize(cls, db_uri: str = None, max_size: int = None) -> None:
         """
         Initialize the async database connection pool
 
         Args:
             db_uri: Database connection URI (defaults to DB_URI from environment)
-            max_size: Maximum number of connections in the pool
+            max_size: Maximum number of connections in the pool (defaults to env var or 12 for Supabase)
         """
+        # Set default max_size based on environment variable or conservative default for Supabase
+        if max_size is None:
+            max_size = int(os.getenv("DB_POOL_MAX_SIZE", "12"))  # Conservative for Supabase's 15 connection limit
         if cls._async_pool is not None:
             # If the connection pool already exists, return directly to avoid repeated initialization
             logger.debug(
@@ -173,7 +176,8 @@ class DatabaseManager:
             )
             await cls._async_pool.open()
             cls._last_health_check = datetime.now()
-            logger.info("Async database connection pool initialized successfully")
+            logger.info(f"Async database connection pool initialized successfully with max_size={max_size}")
+            logger.info(f"Pool stats: min_size={cls._async_pool.min_size}, max_size={cls._async_pool.max_size}")
         except Exception as e:
             logger.error(
                 f"Async database connection pool initialization failed: {str(e)}"
@@ -294,12 +298,42 @@ class DatabaseManager:
             yield cur
 
     @classmethod
+    def get_pool_stats(cls) -> Dict[str, Any]:
+        """
+        Get connection pool statistics
+        
+        Returns:
+            Dict containing pool statistics
+        """
+        if cls._async_pool is None:
+            return {"status": "not_initialized"}
+        
+        try:
+            stats = {
+                "status": "active",
+                "min_size": cls._async_pool.min_size,
+                "max_size": cls._async_pool.max_size,
+                "size": cls._async_pool.size,
+                "available": cls._async_pool.available,
+                "waiting": cls._async_pool.waiting,
+                "last_health_check": cls._last_health_check.isoformat() if cls._last_health_check else None
+            }
+            return stats
+        except Exception as e:
+            logger.error(f"Failed to get pool stats: {str(e)}")
+            return {"status": "error", "error": str(e)}
+    
+    @classmethod
     async def close(cls) -> None:
         """
         Close the async database connection pool
         """
         if cls._async_pool is not None:
             try:
+                # Log final pool stats before closing
+                stats = cls.get_pool_stats()
+                logger.info(f"Closing connection pool. Final stats: {stats}")
+                
                 await cls._async_pool.close()
                 cls._async_pool = None
                 logger.info("Async database connection pool closed successfully")

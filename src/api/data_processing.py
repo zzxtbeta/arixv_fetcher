@@ -205,6 +205,29 @@ async def fetch_arxiv_by_id_api(
                 "inserted": result.get("inserted", 0),
                 "skipped": result.get("skipped", 0),
                 "fetched": result.get("fetched", 0),
+                "total_papers": result.get("total_papers", 0),
+                "processed_papers": len(result.get("processed_paper_ids", [])),
+                "failed_papers": len(result.get("failed_paper_ids", [])),
+                "message": "All papers processed successfully"
+            }
+        elif status == "batch_completed":
+            # 流式处理中的批次完成状态
+            current_batch = result.get("current_batch_index", 0)
+            total_papers = result.get("total_papers", 0)
+            processed_count = len(result.get("processed_paper_ids", []))
+            failed_count = len(result.get("failed_paper_ids", []))
+            
+            return {
+                "status": "batch_completed",
+                "session_id": session_id_used,
+                "inserted": result.get("inserted", 0),
+                "skipped": result.get("skipped", 0),
+                "current_batch": current_batch,
+                "total_papers": total_papers,
+                "processed_papers": processed_count,
+                "failed_papers": failed_count,
+                "progress_percentage": round((processed_count / total_papers) * 100, 2) if total_papers > 0 else 0,
+                "message": f"Batch {current_batch} completed. Processing continues automatically."
             }
         elif status == "api_quota_exhausted":
             return {
@@ -213,6 +236,9 @@ async def fetch_arxiv_by_id_api(
                 "inserted": result.get("inserted", 0),
                 "skipped": result.get("skipped", 0),
                 "fetched": result.get("fetched", 0),
+                "total_papers": result.get("total_papers", 0),
+                "processed_papers": len(result.get("processed_paper_ids", [])),
+                "failed_papers": len(result.get("failed_paper_ids", [])),
                 "message": "Tavily API quota exhausted. Use the session_id to resume processing later.",
                 "resume_endpoint": f"/data/fetch-arxiv-by-id?resume_session_id={session_id_used}"
             }
@@ -226,6 +252,9 @@ async def fetch_arxiv_by_id_api(
             "inserted": result.get("inserted", 0),
             "skipped": result.get("skipped", 0),
             "fetched": result.get("fetched", 0),
+            "total_papers": result.get("total_papers", 0),
+            "processed_papers": len(result.get("processed_paper_ids", [])),
+            "failed_papers": len(result.get("failed_paper_ids", []))
         }
     except HTTPException:
         raise
@@ -246,15 +275,15 @@ async def list_sessions():
             "sessions": [
                 {
                     "session_id": session.session_id,
-                    "status": session.status,
+                    "status": session.status.value if hasattr(session.status, 'value') else session.status,
                     "total_papers": session.total_papers,
-                    "completed_papers": len([p for p in session.papers.values() if p.status == "completed"]),
-                    "failed_papers": len([p for p in session.papers.values() if p.status == "failed"]),
-                    "pending_papers": len([p for p in session.papers.values() if p.status == "pending"]),
-                    "total_inserted": session.total_inserted,
-                    "total_skipped": session.total_skipped,
-                    "created_at": session.created_at.isoformat(),
-                    "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+                    "completed_papers": session.processed_papers,
+                    "failed_papers": session.failed_papers,
+                    "pending_papers": session.total_papers - session.processed_papers - session.failed_papers - session.skipped_papers,
+                    "total_inserted": getattr(session, 'total_inserted', 0),
+                    "total_skipped": getattr(session, 'total_skipped', 0),
+                    "created_at": session.start_time,
+                    "updated_at": session.last_update_time,
                     "error_message": session.error_message
                 }
                 for session in sessions
@@ -272,26 +301,29 @@ async def get_session_details(session_id: str):
         if not session:
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
         
+        # Load paper records separately
+        records = resume_manager._load_records(session_id)
+        
         return {
             "status": "success",
             "session": {
                 "session_id": session.session_id,
-                "status": session.status,
+                "status": session.status.value if hasattr(session.status, 'value') else session.status,
                 "total_papers": session.total_papers,
-                "total_inserted": session.total_inserted,
-                "total_skipped": session.total_skipped,
-                "created_at": session.created_at.isoformat(),
-                "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+                "total_inserted": getattr(session, 'total_inserted', 0),
+                "total_skipped": getattr(session, 'total_skipped', 0),
+                "created_at": session.start_time,
+                "updated_at": session.last_update_time,
                 "error_message": session.error_message,
                 "papers": {
                     paper_id: {
-                        "status": paper.status.value,
+                        "status": paper.status.value if hasattr(paper.status, 'value') else paper.status,
                         "error_message": paper.error_message,
                         "processing_time": paper.processing_time,
-                        "created_at": paper.created_at.isoformat(),
-                        "updated_at": paper.updated_at.isoformat() if paper.updated_at else None
+                        "created_at": paper.last_attempt_time,
+                        "updated_at": paper.last_attempt_time
                     }
-                    for paper_id, paper in session.papers.items()
+                    for paper_id, paper in records.items()
                 }
             }
         }

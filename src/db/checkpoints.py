@@ -21,13 +21,13 @@ class CheckpointerManager:
         return cls._instance
 
     @classmethod
-    async def initialize(cls, db_uri: str, max_size: int = 20) -> None:
+    async def initialize(cls, db_uri: str, max_size: int = None) -> None:
         """
         Initialize the checkpoint manager
 
         Args:
-            db_uri: database connection URI
-            max_size: maximum number of connections in the connection pool
+            db_uri: Database connection URI
+            max_size: maximum number of connections in the connection pool (defaults to env var or 12)
         """
         if cls._initialized and cls._checkpointer is not None:
             logger.debug("Checkpointer already initialized, skipping setup")

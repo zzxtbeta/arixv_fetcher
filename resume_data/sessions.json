@@ -138,5 +138,47 @@
     "api_exhausted_time": null,
     "current_api_key_index": 0,
     "error_message": null
+  },
+  "batch_20250824_170938": {
+    "session_id": "batch_20250824_170938",
+    "source_file": "api_upload",
+    "total_papers": 736,
+    "processed_papers": 0,
+    "failed_papers": 0,
+    "skipped_papers": 0,
+    "start_time": "2025-08-24T17:09:38.974491+00:00",
+    "last_update_time": "2025-08-25T04:27:49.596353+00:00",
+    "status": "failed",
+    "api_exhausted_time": null,
+    "current_api_key_index": 0,
+    "error_message": "Batch 21 failed: consuming input failed: server closed the connection unexpectedly\n\tThis probably means the server terminated abnormally\n\tbefore or while processing the request.\nserver closed the connection unexpectedly\n\tThis probably means the server terminated abnormally\n\tbefore or while processing the request."
+  },
+  "batch_20250825_061252": {
+    "session_id": "batch_20250825_061252",
+    "source_file": "api_upload",
+    "total_papers": 736,
+    "processed_papers": 0,
+    "failed_papers": 0,
+    "skipped_papers": 0,
+    "start_time": "2025-08-25T06:12:52.109468+00:00",
+    "last_update_time": "2025-08-25T06:12:52.109468+00:00",
+    "status": "pending",
+    "api_exhausted_time": null,
+    "current_api_key_index": 0,
+    "error_message": null
+  },
+  "batch_20250825_061339": {
+    "session_id": "batch_20250825_061339",
+    "source_file": "api_upload",
+    "total_papers": 2,
+    "processed_papers": 4,
+    "failed_papers": 0,
+    "skipped_papers": 0,
+    "start_time": "2025-08-25T06:13:39.601262+00:00",
+    "last_update_time": "2025-08-25T06:15:27.333693+00:00",
+    "status": "completed",
+    "api_exhausted_time": null,
+    "current_api_key_index": 0,
+    "error_message": null
   }
 }

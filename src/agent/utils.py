@@ -17,7 +17,8 @@ import asyncio
 import re
 import csv
 import json
-from datetime import datetime, timezone, timedelta, time
+import time
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 import requests
 
@@ -1173,6 +1174,55 @@ _TAVILY_API_KEYS = [
 _CURRENT_TAVILY_KEY_INDEX = 0
 _TAVILY_CLIENT_CACHE = {}
 
+# API Rate Limiting Variables
+_LAST_TAVILY_REQUEST_TIME = 0.0
+_TAVILY_REQUEST_COUNT = 0
+_TAVILY_REQUEST_WINDOW_START = 0.0
+_TAVILY_SEMAPHORE = None
+
+def _get_tavily_semaphore():
+    """Get or create Tavily API semaphore for concurrency control."""
+    global _TAVILY_SEMAPHORE
+    if _TAVILY_SEMAPHORE is None:
+        max_concurrency = int(os.getenv("TAVILY_MAX_CONCURRENCY", "3"))
+        _TAVILY_SEMAPHORE = asyncio.Semaphore(max_concurrency)
+    return _TAVILY_SEMAPHORE
+
+async def _rate_limit_tavily_request():
+    """Apply rate limiting for Tavily API requests."""
+    global _LAST_TAVILY_REQUEST_TIME, _TAVILY_REQUEST_COUNT, _TAVILY_REQUEST_WINDOW_START
+    
+    current_time = time.time()
+    
+    # Configuration from environment
+    request_delay = float(os.getenv("TAVILY_REQUEST_DELAY", "1.0"))
+    requests_per_minute = int(os.getenv("TAVILY_REQUESTS_PER_MINUTE", "30"))
+    
+    # Check if we need to reset the request window (1 minute)
+    if current_time - _TAVILY_REQUEST_WINDOW_START >= 60.0:
+        _TAVILY_REQUEST_COUNT = 0
+        _TAVILY_REQUEST_WINDOW_START = current_time
+    
+    # Check if we've exceeded requests per minute
+    if _TAVILY_REQUEST_COUNT >= requests_per_minute:
+        wait_time = 60.0 - (current_time - _TAVILY_REQUEST_WINDOW_START)
+        if wait_time > 0:
+            logger.info(f"Rate limit reached, waiting {wait_time:.1f} seconds")
+            await asyncio.sleep(wait_time)
+            # Reset window after waiting
+            _TAVILY_REQUEST_COUNT = 0
+            _TAVILY_REQUEST_WINDOW_START = time.time()
+    
+    # Apply minimum delay between requests
+    time_since_last = current_time - _LAST_TAVILY_REQUEST_TIME
+    if time_since_last < request_delay:
+        wait_time = request_delay - time_since_last
+        await asyncio.sleep(wait_time)
+    
+    # Update counters
+    _LAST_TAVILY_REQUEST_TIME = time.time()
+    _TAVILY_REQUEST_COUNT += 1
+
 def get_next_tavily_api_key() -> Optional[str]:
     """Get the next available Tavily API key in rotation."""
     global _CURRENT_TAVILY_KEY_INDEX
@@ -1234,8 +1284,8 @@ def get_tavily_client() -> Optional[object]:
         logger.error(f"Failed to create Tavily client with key {api_key[:10]}...: {e}")
         return None
 
-def search_person_role_with_tavily(name: str, affiliation: str) -> Optional[Dict[str, Any]]:
-    """Search for person's role information using Tavily web search with API key rotation.
+async def search_person_role_with_tavily(name: str, affiliation: str) -> Optional[Dict[str, Any]]:
+    """Search for person's role information using Tavily web search with API key rotation and rate limiting.
     
     Args:
         name: Person's full name
@@ -1251,54 +1301,71 @@ def search_person_role_with_tavily(name: str, affiliation: str) -> Optional[Dict
     query = f"What is {name}'s role position job title at {affiliation}?"
     logger.info(f"Tavily searching: {query}")
     
-    # Try with current API key, rotate if quota exceeded
-    max_retries = len(_TAVILY_API_KEYS)
-    for attempt in range(max_retries):
-        client = get_tavily_client()
-        if not client:
-            logger.warning(f"No Tavily client available on attempt {attempt + 1}")
-            continue
+    # Configuration from environment
+    max_retries = int(os.getenv("API_MAX_RETRIES", "3"))
+    retry_delay = float(os.getenv("API_RETRY_DELAY", "2.0"))
+    
+    # Apply concurrency control
+    semaphore = _get_tavily_semaphore()
+    async with semaphore:
+        # Try with current API key, rotate if quota exceeded
+        for attempt in range(max_retries):
+            # Apply rate limiting before each request
+            await _rate_limit_tavily_request()
             
-        try:
-            response = client.search(
-                query=query,
-                search_depth="advanced",
-                include_answer="advanced",
-                max_results=5,
-                include_domains=None,
-                exclude_domains=None
-            )
+            client = get_tavily_client()
+            if not client:
+                logger.warning(f"No Tavily client available on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                continue
+                
+            try:
+                # Make the API call in a thread to avoid blocking
+                response = await asyncio.to_thread(
+                    client.search,
+                    query=query,
+                    search_depth="advanced",
+                    include_answer="advanced",
+                    max_results=5,
+                    include_domains=None,
+                    exclude_domains=None
+                )
+                
+                # Extract relevant information
+                answer = response.get('answer', '')
+                results = response.get('results', [])
+                
+                # Use LLM to extract role from search results
+                extracted_role = await asyncio.to_thread(_extract_role_with_llm, name, affiliation, answer, results)
+                
+                return {
+                    "query": query,
+                    "answer": answer,
+                    "results": results,
+                    "extracted_role": extracted_role,
+                    "search_successful": True
+                }
             
-            # Extract relevant information
-            answer = response.get('answer', '')
-            results = response.get('results', [])
-            
-            # Use LLM to extract role from search results
-            extracted_role = _extract_role_with_llm(name, affiliation, answer, results)
-            
-            return {
-                "query": query,
-                "answer": answer,
-                "results": results,
-                "extracted_role": extracted_role,
-                "search_successful": True
-            }
-            
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Tavily search error on attempt {attempt + 1}: {error_msg}")
-            
-            # Check if it's a quota exceeded error
-            if is_quota_exceeded_error(error_msg):
-                logger.warning(f"API quota exceeded, attempting to rotate to next key")
-                if rotate_tavily_api_key():
-                    continue  # Try with next API key
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"Tavily search error on attempt {attempt + 1}: {error_msg}")
+                
+                # Check if it's a quota exceeded error
+                if is_quota_exceeded_error(error_msg):
+                    logger.warning(f"API quota exceeded, attempting to rotate to next key")
+                    if rotate_tavily_api_key():
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(retry_delay)
+                        continue  # Try with next API key
+                    else:
+                        logger.error("All Tavily API keys exhausted")
+                        break
                 else:
-                    logger.error("All Tavily API keys exhausted")
-                    break
-            else:
-                # Non-quota error, don't retry
-                break
+                    # Non-quota error, add delay before retry
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay)
+                    continue
     
     # All attempts failed
     return {
@@ -1307,8 +1374,8 @@ def search_person_role_with_tavily(name: str, affiliation: str) -> Optional[Dict
         "search_successful": False
     }
 
-def search_person_general_with_tavily(name: str, affiliation: str, search_prompt: str) -> Optional[Dict[str, Any]]:
-    """General Tavily web search for person information with custom prompt and API key rotation.
+async def search_person_general_with_tavily(name: str, affiliation: str, search_prompt: str) -> Optional[Dict[str, Any]]:
+    """General Tavily web search for person information with custom prompt, API key rotation, and rate limiting.
     
     Args:
         name: Person's full name
@@ -1326,49 +1393,66 @@ def search_person_general_with_tavily(name: str, affiliation: str, search_prompt
     query = f"{search_prompt} {name} {affiliation}"
     logger.info(f"Tavily searching: {query}")
     
-    # Try with current API key, rotate if quota exceeded
-    max_retries = len(_TAVILY_API_KEYS)
-    for attempt in range(max_retries):
-        client = get_tavily_client()
-        if not client:
-            logger.warning(f"No Tavily client available on attempt {attempt + 1}")
-            continue
+    # Configuration from environment
+    max_retries = int(os.getenv("API_MAX_RETRIES", "3"))
+    retry_delay = float(os.getenv("API_RETRY_DELAY", "2.0"))
+    
+    # Apply concurrency control
+    semaphore = _get_tavily_semaphore()
+    async with semaphore:
+        # Try with current API key, rotate if quota exceeded
+        for attempt in range(max_retries):
+            # Apply rate limiting before each request
+            await _rate_limit_tavily_request()
             
-        try:
-            response = client.search(
-                query=query,
-                search_depth="advanced",
-                include_answer="advanced",
-                max_results=8,
-                include_domains=None,
-                exclude_domains=None
-            )
+            client = get_tavily_client()
+            if not client:
+                logger.warning(f"No Tavily client available on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                continue
+                
+            try:
+                # Make the API call in a thread to avoid blocking
+                response = await asyncio.to_thread(
+                    client.search,
+                    query=query,
+                    search_depth="advanced",
+                    include_answer="advanced",
+                    max_results=8,
+                    include_domains=None,
+                    exclude_domains=None
+                )
+                
+                return {
+                    "query": query,
+                    "answer": response.get('answer', ''),
+                    "results": response.get('results', []),
+                    "search_successful": True,
+                    "person_name": name,
+                    "affiliation": affiliation,
+                    "search_prompt": search_prompt
+                }
             
-            return {
-                "query": query,
-                "answer": response.get('answer', ''),
-                "results": response.get('results', []),
-                "search_successful": True,
-                "person_name": name,
-                "affiliation": affiliation,
-                "search_prompt": search_prompt
-            }
-            
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Tavily search error on attempt {attempt + 1}: {error_msg}")
-            
-            # Check if it's a quota exceeded error
-            if is_quota_exceeded_error(error_msg):
-                logger.warning(f"API quota exceeded, attempting to rotate to next key")
-                if rotate_tavily_api_key():
-                    continue  # Try with next API key
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"Tavily search error on attempt {attempt + 1}: {error_msg}")
+                
+                # Check if it's a quota exceeded error
+                if is_quota_exceeded_error(error_msg):
+                    logger.warning(f"API quota exceeded, attempting to rotate to next key")
+                    if rotate_tavily_api_key():
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(retry_delay)
+                        continue  # Try with next API key
+                    else:
+                        logger.error("All Tavily API keys exhausted")
+                        break
                 else:
-                    logger.error("All Tavily API keys exhausted")
-                    break
-            else:
-                # Non-quota error, don't retry
-                break
+                    # Non-quota error, add delay before retry
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay)
+                    continue
     
     # All attempts failed
         return {

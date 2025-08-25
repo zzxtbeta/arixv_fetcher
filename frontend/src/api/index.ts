@@ -313,4 +313,85 @@ export async function searchOpenAlexConcepts(params: {
     }>
     message: string
   }
-} 
+}
+
+// Session Management APIs
+export async function listSessions() {
+  const { data } = await api.get('/data/sessions')
+  return data as {
+    status: string
+    sessions: Array<{
+      session_id: string
+      status: string
+      total_papers: number
+      completed_papers: number
+      failed_papers: number
+      pending_papers: number
+      total_inserted: number
+      total_skipped: number
+      created_at: string
+      updated_at: string | null
+      error_message: string | null
+    }>
+  }
+}
+
+export async function getSessionDetails(sessionId: string) {
+  const { data } = await api.get(`/data/sessions/${sessionId}`)
+  return data as {
+    status: string
+    session: {
+      session_id: string
+      status: string
+      total_papers: number
+      total_inserted: number
+      total_skipped: number
+      created_at: string
+      updated_at: string | null
+      error_message: string | null
+      papers: Record<string, {
+        status: string
+        error_message: string | null
+        processing_time: number | null
+        created_at: string
+        updated_at: string | null
+      }>
+    }
+  }
+}
+
+export async function resumeSession(sessionId: string) {
+  const { data } = await api.post('/data/fetch-arxiv-by-id', null, {
+    params: {
+      ids: '',
+      resume_session_id: sessionId
+    }
+  })
+  return data as {
+    status: string
+    session_id: string
+    inserted: number
+    skipped: number
+    fetched: number
+    message?: string
+    resume_endpoint?: string
+  }
+}
+
+export async function deleteSession(sessionId: string) {
+  const { data } = await api.delete(`/data/sessions/${sessionId}`)
+  return data as {
+    status: string
+    message: string
+  }
+}
+
+export async function getPendingPapers(sessionId: string) {
+  const { data } = await api.get(`/data/sessions/${sessionId}/pending-papers`)
+  return data as {
+    status: string
+    session_id: string
+    pending_paper_ids: string[]
+    count: number
+  }
+}

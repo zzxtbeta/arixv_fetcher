@@ -12,7 +12,7 @@ import logging
 import asyncio
 import re
 import json
-from datetime import datetime, timezone, timedelta, time
+from datetime import datetime, timezone, timedelta, time as dt_time
 from typing import Dict, Any, List, Optional
 from difflib import SequenceMatcher
 
@@ -51,16 +51,30 @@ _AFF_SEM = asyncio.Semaphore(_AFF_MAX)
 _ORCID_MAX = int(os.getenv("ORCID_MAX_CONCURRENCY", "5"))
 _ORCID_SEM = asyncio.Semaphore(_ORCID_MAX)
 
+# Tavily API batch processing delay configuration
+_TAVILY_BATCH_DELAY = float(os.getenv("TAVILY_BATCH_DELAY", "2.0"))
+
+# Database batch processing concurrency control
+_BATCH_MAX_CONCURRENCY = int(os.getenv("BATCH_MAX_CONCURRENCY", "3"))  # Limit concurrent batches for Supabase
+_BATCH_SEM = asyncio.Semaphore(_BATCH_MAX_CONCURRENCY)
+
 # ---------------------- Node Functions ----------------------
 
 async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) -> DataProcessingState:
-    """Fetch latest papers from arXiv by date window, explicit date range or id_list."""
+    """Fetch latest papers from arXiv by date window, explicit date range or id_list.
+    
+    Modified for streaming processing: handles batch fetching and processing.
+    """
     try:
         cfg = config.get("configurable", {}) if isinstance(config, dict) else {}
         
         # 检查是否为恢复模式
         session_id = cfg.get("session_id")
         resume_mode = cfg.get("resume_mode", False)
+        
+        # 获取批处理配置
+        batch_size = int(os.getenv("BATCH_SIZE", "10"))
+        current_batch_index = state.get("current_batch_index", 0)
         
         # Optional id_list overrides window/range query
         id_list = cfg.get("id_list")
@@ -94,7 +108,9 @@ async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) 
                     "processed_paper_ids": [],
                     "failed_paper_ids": [],
                     "api_exhausted": False,
-                    "current_batch_index": 0
+                    "current_batch_index": 0,
+                    "total_papers": 0,
+                    "all_paper_ids": []
                 }
         
         # 如果是新的批量处理且有id_list，创建会话
@@ -105,17 +121,66 @@ async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) 
             )
             logger.info(f"Created new processing session: {session_id}")
 
+        # 流式处理逻辑：分批获取和处理论文
         if id_list:
-            raw = await asyncio.to_thread(search_papers_by_ids, id_list)
-            logger.info(f"arXiv fetch by id_list: count={len(raw)}")
+            # 获取所有论文ID列表
+            all_paper_ids = state.get("all_paper_ids", id_list)
+            total_papers = len(all_paper_ids)
+            
+            # 计算当前批次的范围
+            batch_start = current_batch_index * batch_size
+            batch_end = min(batch_start + batch_size, total_papers)
+            
+            if batch_start >= total_papers:
+                # 所有批次都已处理完成
+                logger.info(f"All batches completed. Total papers processed: {total_papers}")
+                return {
+                    "processing_status": "completed",
+                    "raw_papers": [],
+                    "fetched": 0,
+                    "papers": [],
+                    "categories": categories,
+                    "session_id": session_id,
+                    "resume_mode": resume_mode,
+                    "processed_paper_ids": state.get("processed_paper_ids", []),
+                    "failed_paper_ids": state.get("failed_paper_ids", []),
+                    "api_exhausted": False,
+                    "current_batch_index": current_batch_index,
+                    "total_papers": total_papers,
+                    "all_paper_ids": all_paper_ids
+                }
+            
+            # 获取当前批次的论文ID
+            current_batch_ids = all_paper_ids[batch_start:batch_end]
+            logger.info(f"Processing batch {current_batch_index + 1}/{(total_papers + batch_size - 1) // batch_size}: papers {batch_start + 1}-{batch_end}")
+            
+            # 获取当前批次的论文数据
+            raw = await asyncio.to_thread(search_papers_by_ids, current_batch_ids)
+            logger.info(f"arXiv fetch batch {current_batch_index + 1}: fetched {len(raw)} papers")
+            
+            return {
+                "processing_status": "fetched",
+                "raw_papers": raw,
+                "fetched": len(raw),
+                "papers": [],
+                "categories": categories,
+                "session_id": session_id,
+                "resume_mode": resume_mode,
+                "processed_paper_ids": state.get("processed_paper_ids", []),
+                "failed_paper_ids": state.get("failed_paper_ids", []),
+                "api_exhausted": False,
+                "current_batch_index": current_batch_index,
+                "total_papers": total_papers,
+                "all_paper_ids": all_paper_ids
+            }
         else:
-            # Prefer explicit date range if both provided
+            # 非ID列表模式：按日期范围或窗口获取（保持原有逻辑）
             if start_date and end_date:
                 try:
                     sd = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
                     ed = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-                    start_dt = datetime.combine(sd.date(), time(0, 0, tzinfo=timezone.utc))
-                    end_dt = datetime.combine(ed.date(), time(23, 59, tzinfo=timezone.utc))
+                    start_dt = datetime.combine(sd.date(), dt_time(0, 0, tzinfo=timezone.utc))
+                    end_dt = datetime.combine(ed.date(), dt_time(23, 59, tzinfo=timezone.utc))
                     raw = await asyncio.to_thread(search_papers_by_range, categories, start_dt, end_dt, max_results)
                     cats_label = ",".join(categories) if categories else "all"
                     logger.info(f"arXiv fetch by range: {start_date} to {end_date}, categories={cats_label}, fetched={len(raw)}")
@@ -128,21 +193,22 @@ async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) 
                 raw = await asyncio.to_thread(search_papers_by_window, categories, days, max_results)
                 cats_label = ",".join(categories) if categories else "all"
                 logger.info(f"arXiv fetch by window: days={days}, categories={cats_label}, fetched={len(raw)}")
-        
-        return {
-            "processing_status": "fetched",
-            "raw_papers": raw,
-            "fetched": len(raw),
-            # initialize accumulator for parallel map
-            "papers": [],
-            "categories": categories,
-            "session_id": session_id,
-            "resume_mode": resume_mode,
-            "processed_paper_ids": [],
-            "failed_paper_ids": [],
-            "api_exhausted": False,
-            "current_batch_index": 0
-        }
+            
+            return {
+                "processing_status": "fetched",
+                "raw_papers": raw,
+                "fetched": len(raw),
+                "papers": [],
+                "categories": categories,
+                "session_id": session_id,
+                "resume_mode": resume_mode,
+                "processed_paper_ids": [],
+                "failed_paper_ids": [],
+                "api_exhausted": False,
+                "current_batch_index": 0,
+                "total_papers": len(raw),
+                "all_paper_ids": [p.get("id") for p in raw if p.get("id")]
+            }
     except Exception as e:
         return {"processing_status": "error", "error_message": str(e)}
 
@@ -427,7 +493,11 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
             if search_aff:
                 logger.info(f"Trying Tavily API for {name} at {search_aff} (ORCID found: {orcid_found})")
                 try:
-                    tavily_result = await asyncio.to_thread(search_person_role_with_tavily, name, search_aff)
+                    # Add throttling delay between Tavily API calls in batch processing
+                    if i > 0:  # Skip delay for first author in batch
+                        await asyncio.sleep(_TAVILY_BATCH_DELAY)
+                    
+                    tavily_result = await search_person_role_with_tavily(name, search_aff)
                     if tavily_result and tavily_result.get("search_successful"):
                         extracted_role = tavily_result.get("extracted_role")
                         if extracted_role:
@@ -577,7 +647,8 @@ def dispatch_orcid_processing(state: DataProcessingState):
 
 async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> DataProcessingState:
     """Create normalized schema and insert papers/authors/categories/affiliations.
-    DB writes remain in a single node to avoid deadlocks.
+    
+    Modified for streaming processing: processes current batch and prepares for next batch.
     """
     try:
         # Allow upsert if we have papers to process, regardless of current status
@@ -585,20 +656,49 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
         raw_papers: List[Dict[str, Any]] = state.get("raw_papers", []) or []
         session_id = state.get("session_id")
         api_exhausted = state.get("api_exhausted", False)
+        current_batch_index = state.get("current_batch_index", 0)
+        total_papers = state.get("total_papers", 0)
+        all_paper_ids = state.get("all_paper_ids", [])
+        processed_paper_ids = state.get("processed_paper_ids", [])
+        failed_paper_ids = state.get("failed_paper_ids", [])
         
         # Use papers if available, otherwise use raw_papers
         papers_to_process = papers if papers else raw_papers
         
         if not papers_to_process:
-            result = {
-                "processing_status": "completed",
-                "inserted": 0,
-                "skipped": 0,
-                "fetched": state.get("fetched", 0)
-            }
-            if api_exhausted:
-                result["processing_status"] = "api_quota_exhausted"
-            return result
+            # 检查是否还有更多批次需要处理
+            batch_size = int(os.getenv("BATCH_SIZE", "10"))
+            next_batch_index = current_batch_index + 1
+            
+            if next_batch_index * batch_size >= total_papers:
+                # 所有批次都已完成
+                result = {
+                    "processing_status": "completed",
+                    "inserted": len(processed_paper_ids),
+                    "skipped": 0,
+                    "fetched": state.get("fetched", 0),
+                    "current_batch_index": next_batch_index,
+                    "total_papers": total_papers,
+                    "all_paper_ids": all_paper_ids,
+                    "processed_paper_ids": processed_paper_ids,
+                    "failed_paper_ids": failed_paper_ids
+                }
+                if api_exhausted:
+                    result["processing_status"] = "api_quota_exhausted"
+                return result
+            else:
+                # 还有更多批次，返回batch_completed状态
+                return {
+                    "processing_status": "batch_completed",
+                    "inserted": 0,
+                    "skipped": 0,
+                    "fetched": state.get("fetched", 0),
+                    "current_batch_index": next_batch_index,
+                    "total_papers": total_papers,
+                    "all_paper_ids": all_paper_ids,
+                    "processed_paper_ids": processed_paper_ids,
+                    "failed_paper_ids": failed_paper_ids
+                }
         
         db_uri = os.getenv("DATABASE_URL")
         if not db_uri:
@@ -607,21 +707,142 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
         await DatabaseManager.initialize(db_uri)
         pool = await DatabaseManager.get_pool()
 
-        inserted = 0; skipped = 0
-        # papers variable already defined above
+        # 处理当前批次的论文
+        logger.info(f"Processing current batch {current_batch_index + 1}: {len(papers_to_process)} papers")
         
-        async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await create_schema_if_not_exists(cur)
-                # Prepare QS mapping and ranking systems once per transaction
-                qs_map = get_qs_map()
-                qs_names = get_qs_names()
-                qs_sys_ids = await ensure_qs_ranking_systems(cur)
-                
-                # Global author cache to avoid duplicates across papers
-                author_name_to_id: Dict[str, int] = {}
+        try:
+            # 使用信号量限制并发批次数量，避免过多数据库连接
+            async with _BATCH_SEM:
+                batch_inserted, batch_skipped = await _process_paper_batch(
+                    papers_to_process, pool, session_id
+                )
+            
+            # 更新已处理的论文ID
+            for paper in papers_to_process:
+                paper_id = paper.get("id")
+                if paper_id and paper_id not in processed_paper_ids:
+                    processed_paper_ids.append(paper_id)
+            
+            logger.info(f"Batch {current_batch_index + 1} completed: {batch_inserted} inserted, {batch_skipped} skipped")
+            
+            # 更新会话进度
+            if session_id:
+                resume_manager.update_session_progress(
+                    session_id,
+                    processed_count=len(processed_paper_ids),
+                    failed_count=len(failed_paper_ids)
+                )
+                    
+        except Exception as e:
+            logger.error(f"Error processing batch {current_batch_index + 1}: {str(e)}")
+            
+            # 将当前批次的论文标记为失败
+            for paper in papers_to_process:
+                paper_id = paper.get("id")
+                if paper_id and paper_id not in failed_paper_ids:
+                    failed_paper_ids.append(paper_id)
+            
+            # 更新会话进度
+            if session_id:
+                resume_manager.update_session_progress(
+                    session_id,
+                    processed_count=len(processed_paper_ids),
+                    failed_count=len(failed_paper_ids),
+                    error_message=f"Batch {current_batch_index + 1} failed: {str(e)}"
+                )
+            
+            batch_inserted = 0
+            batch_skipped = 0
+        
+        # 准备下一批次
+        batch_size = int(os.getenv("BATCH_SIZE", "10"))
+        next_batch_index = current_batch_index + 1
+        
+        # 检查是否还有更多批次需要处理
+        if next_batch_index * batch_size >= total_papers:
+            # 所有批次都已完成，更新最终会话状态
+            if session_id:
+                final_status = "completed" if len(failed_paper_ids) == 0 else "failed"
+                resume_manager.update_session_progress(
+                    session_id,
+                    processed_count=len(processed_paper_ids),
+                    failed_count=len(failed_paper_ids),
+                    status=final_status
+                )
+            
+            processing_status = "api_quota_exhausted" if api_exhausted else "completed"
+            logger.info(f"All batches completed: {len(processed_paper_ids)} papers processed, {len(failed_paper_ids)} failed")
+            
+            return {
+                "processing_status": processing_status,
+                "inserted": len(processed_paper_ids),
+                "skipped": 0,
+                "api_exhausted": api_exhausted,
+                "current_batch_index": next_batch_index,
+                "total_papers": total_papers,
+                "all_paper_ids": all_paper_ids,
+                "processed_paper_ids": processed_paper_ids,
+                "failed_paper_ids": failed_paper_ids
+            }
+        else:
+            # 还有更多批次需要处理
+            logger.info(f"Batch {current_batch_index + 1} completed, preparing for next batch {next_batch_index + 1}")
+            
+            return {
+                "processing_status": "batch_completed",
+                "inserted": batch_inserted,
+                "skipped": batch_skipped,
+                "api_exhausted": api_exhausted,
+                "current_batch_index": next_batch_index,
+                "total_papers": total_papers,
+                "all_paper_ids": all_paper_ids,
+                "processed_paper_ids": processed_paper_ids,
+                "failed_paper_ids": failed_paper_ids
+            }
+        
+    except Exception as e:
+        # 保存错误状态到会话
+        session_id = state.get("session_id")
+        if session_id:
+            resume_manager.update_session_progress(
+                session_id,
+                processed_count=len(state.get("processed_paper_ids", [])),
+                failed_count=len(state.get("failed_paper_ids", [])),
+                error_message=str(e)
+            )
+        
+        return {
+            "processing_status": "error",
+            "error_message": str(e),
+            "api_exhausted": state.get("api_exhausted", False),
+            "current_batch_index": state.get("current_batch_index", 0),
+            "total_papers": state.get("total_papers", 0),
+            "all_paper_ids": state.get("all_paper_ids", []),
+            "processed_paper_ids": state.get("processed_paper_ids", []),
+            "failed_paper_ids": state.get("failed_paper_ids", [])
+        }
 
-                for i, p in enumerate(papers_to_process):
+async def _process_paper_batch(
+    papers_batch: List[Dict[str, Any]], 
+    pool, 
+    session_id: Optional[str] = None
+) -> tuple[int, int]:
+    """处理单个论文批次的核心逻辑"""
+    inserted = 0
+    skipped = 0
+    
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await create_schema_if_not_exists(cur)
+            # Prepare QS mapping and ranking systems once per transaction
+            qs_map = get_qs_map()
+            qs_names = get_qs_names()
+            qs_sys_ids = await ensure_qs_ranking_systems(cur)
+            
+            # Global author cache to avoid duplicates across papers in this batch
+            author_name_to_id: Dict[str, int] = {}
+
+            for i, p in enumerate(papers_batch):
                     paper_title = p.get("title")
                     if not paper_title:
                         continue
@@ -918,47 +1139,10 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
                                     except Exception as e:
                                         logger.warning(f"Failed to update end_date for {name}: {e}")
 
-                # Commit the transaction
-                await conn.commit()
-
-        # 保存会话进度
-        if session_id:
-            resume_manager.update_session_progress(
-                session_id,
-                inserted_count=inserted,
-                skipped_count=skipped
-            )
-        
-        # 确定最终状态
-        if api_exhausted:
-            processing_status = "api_quota_exhausted"
-            logger.warning(f"Processing stopped due to API quota exhaustion: {inserted} inserted, {skipped} skipped")
-        else:
-            processing_status = "completed"
-            logger.info(f"Upsert completed: {inserted} inserted, {skipped} skipped")
-        
-        return {
-            "processing_status": processing_status,
-            "inserted": inserted,
-            "skipped": skipped,
-            "api_exhausted": api_exhausted
-        }
-    except Exception as e:
-        # 保存错误状态到会话
-        session_id = state.get("session_id")
-        if session_id:
-            resume_manager.update_session_progress(
-                session_id,
-                inserted_count=0,
-                skipped_count=0,
-                error_message=str(e)
-            )
-        
-        return {
-            "processing_status": "error",
-            "error_message": str(e),
-            "api_exhausted": state.get("api_exhausted", False)
-        }
+            # Commit the transaction for this batch
+            await conn.commit()
+    
+    return inserted, skipped
 
 # ---------------------- Graph Construction ----------------------
 
@@ -975,6 +1159,17 @@ def collect_single_paper_results(state: DataProcessingState) -> DataProcessingSt
     papers = state.get("papers", []) or []
     logger.info(f"Collected {len(papers)} papers from process_single_paper")
     return state
+
+def should_continue_processing(state: DataProcessingState):
+    """Determine if processing should continue to next batch or end."""
+    processing_status = state.get("processing_status")
+    
+    if processing_status == "batch_completed":
+        # Continue to next batch
+        return "fetch_arxiv_today"
+    else:
+        # End processing (completed, error, or api_quota_exhausted)
+        return END
 
 # Build the state graph
 builder = StateGraph(DataProcessingState)
@@ -1002,7 +1197,11 @@ builder.add_conditional_edges(
 builder.add_edge("process_orcid_for_paper", "merge_paper_results")
 builder.add_edge("merge_paper_results", "upsert_papers")
 
-builder.add_edge("upsert_papers", END)
+# Add conditional edge from upsert_papers to either continue or end
+builder.add_conditional_edges(
+    "upsert_papers",
+    should_continue_processing,
+)
 
 data_processing_graph = builder.compile()
 

@@ -483,7 +483,7 @@ async def web_search_person(
     """Search for person information using Tavily web search with custom prompt."""
     try:
         # Use general search with custom prompt
-        search_result = search_person_general_with_tavily(name, affiliation, search_prompt)
+        search_result = await search_person_general_with_tavily(name, affiliation, search_prompt)
         
         if not search_result:
             return {
@@ -519,7 +519,7 @@ async def search_person_role(
     """Search for person's role information using Tavily web search."""
     try:
         # Use specialized role search
-        search_result = search_person_role_with_tavily(name, affiliation)
+        search_result = await search_person_role_with_tavily(name, affiliation)
         
         if not search_result:
             return {

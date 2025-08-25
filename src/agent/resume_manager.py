@@ -222,8 +222,10 @@ class ResumeManager:
         return self.get_pending_papers(session_id)
     
     def update_session_progress(self, session_id: str, inserted_count: int = 0, 
-                              skipped_count: int = 0, error_message: Optional[str] = None):
-        """更新会话进度"""
+                              skipped_count: int = 0, error_message: Optional[str] = None,
+                              processed_count: int = 0, failed_count: int = 0, 
+                              status: Optional[str] = None):
+        """更新会话进度（支持流式处理）"""
         if session_id not in self._sessions:
             logger.warning(f"Session {session_id} not found for progress update")
             return
@@ -231,14 +233,26 @@ class ResumeManager:
         session = self._sessions[session_id]
         session.total_inserted = getattr(session, 'total_inserted', 0) + inserted_count
         session.total_skipped = getattr(session, 'total_skipped', 0) + skipped_count
+        session.processed_papers = getattr(session, 'processed_papers', 0) + processed_count
+        session.failed_papers = getattr(session, 'failed_papers', 0) + failed_count
         session.last_update_time = datetime.now(timezone.utc).isoformat()
         
         if error_message:
             session.error_message = error_message
-            session.status = ProcessingStatus.FAILED
+            if not status:
+                session.status = ProcessingStatus.FAILED
+        
+        # 更新会话状态
+        if status:
+            if status == "completed":
+                session.status = ProcessingStatus.COMPLETED
+            elif status == "failed":
+                session.status = ProcessingStatus.FAILED
+            elif status == "api_quota_exhausted":
+                session.status = ProcessingStatus.API_EXHAUSTED
         
         self._save_sessions()
-        logger.info(f"Updated session {session_id} progress: +{inserted_count} inserted, +{skipped_count} skipped")
+        logger.info(f"Updated session {session_id} progress: +{inserted_count} inserted, +{skipped_count} skipped, +{processed_count} processed, +{failed_count} failed")
     
     def get_processed_papers(self, session_id: str) -> List[str]:
         """获取已处理的论文ID列表"""
