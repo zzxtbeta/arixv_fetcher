@@ -321,11 +321,10 @@ async def process_single_paper(state: Dict[str, Any]) -> Dict[str, Any]:
 
 async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
     """Enrich a single paper using ORCID: per author, if ORCID record strictly matches name and
-    the institution matches the paper-extracted affiliation, capture orcid and role/start/end.
+    the institution matches the paper-extracted affiliation, capture orcid.
 
     Output merges via accumulator: {"papers": [enriched_paper]} where enriched_paper carries:
       - orcid_by_author: {author_name -> orcid_id}
-      - orcid_aff_meta: {author_name -> { norm_aff_key -> {role,start_date,end_date} }}
     """
     paper = state.get("paper", {})
     paper_id = paper.get("id", "unknown")
@@ -341,7 +340,6 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
         logger.info("No authors or affiliations found, skipping ORCID processing")
         return {"papers": [{**paper}]}
     orcid_by_author: Dict[str, str] = {}
-    orcid_aff_meta: Dict[str, Dict[str, Dict[str, Optional[str]]]] = {}
     api_exhausted = False
 
     # Read-only pre-check: if author already has orcid and all current affiliations already
@@ -540,23 +538,11 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
         if api_exhausted:
             break
         
-        # Store the affiliation metadata if we have any useful information
-        if role or department or sd or ed:
-            # Use consistent normalization logic with upsert_papers
-            cleaned_aff = " ".join((aff_used or "").split())
-            norm_key = cleaned_aff.replace(" ", "").lower()
-            orcid_aff_meta.setdefault(name, {})[norm_key] = {
-                "role": role, 
-                "department": department, 
-                "start_date": sd, 
-                "end_date": ed
-            }
-            logger.info(f"Stored metadata for {name} at {cleaned_aff}: role={role}, dept={department}")
+        # Note: role, department, start_date, end_date information is no longer stored
+        # as orcid_aff_meta field has been removed from the database schema
     enriched = {**paper}
     if orcid_by_author:
         enriched["orcid_by_author"] = orcid_by_author
-    if orcid_aff_meta:
-        enriched["orcid_aff_meta"] = orcid_aff_meta
     return {"papers": [enriched], "api_exhausted": api_exhausted}
 
 def merge_paper_results(state: DataProcessingState) -> DataProcessingState:
@@ -600,8 +586,6 @@ def merge_paper_results(state: DataProcessingState) -> DataProcessingState:
             # Merge orcid data (from process_orcid_for_paper)
             if "orcid_by_author" in paper:
                 existing["orcid_by_author"] = paper["orcid_by_author"]
-            if "orcid_aff_meta" in paper:
-                existing["orcid_aff_meta"] = paper["orcid_aff_meta"]
         else:
             paper_map[arxiv_entry] = paper.copy()
     
@@ -853,24 +837,19 @@ async def _process_paper_batch(
                     pdf_source = p.get("pdf_url")
                     arxiv_entry = p.get("id")
 
-                    # Insert paper with orcid_aff_meta
+                    # Insert paper
                     paper_id = None
-                    orcid_aff_meta_json = None
-                    if p.get("orcid_aff_meta"):
-                        import json
-                        orcid_aff_meta_json = json.dumps(p["orcid_aff_meta"])
                     
                     try:
                         await cur.execute(
                             """
                             INSERT INTO papers (
-                                paper_title, published, updated, abstract, doi, pdf_source, arxiv_entry, orcid_aff_meta
-                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (arxiv_entry) DO UPDATE SET
-                                orcid_aff_meta = COALESCE(papers.orcid_aff_meta, EXCLUDED.orcid_aff_meta)
+                                paper_title, published, updated, abstract, doi, pdf_source, arxiv_entry
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (arxiv_entry) DO NOTHING
                             RETURNING id
                             """,
-                            (paper_title, published_date, updated_date, abstract, doi, pdf_source, arxiv_entry, orcid_aff_meta_json),
+                            (paper_title, published_date, updated_date, abstract, doi, pdf_source, arxiv_entry),
                         )
                         row = await cur.fetchone()
                         if row and row[0]:
@@ -1096,48 +1075,8 @@ async def _process_paper_batch(
                                 """,
                                 (author_id, aff_id, pub_dt),
                             )
-                            # If ORCID meta present for this author-affiliation, update role/start/end
-                            meta = ((p.get("orcid_aff_meta") or {}).get(name) or {}).get(norm_key)
-                            if meta:
-                                role = meta.get("role")
-                                department = meta.get("department")
-                                sd = meta.get("start_date"); ed = meta.get("end_date")
-                                
-                                if role:
-                                    try:
-                                        await cur.execute(
-                                            "UPDATE author_affiliation SET role = %s WHERE author_id = %s AND affiliation_id = %s",
-                                            (role, author_id, aff_id),
-                                        )
-                                    except Exception as e:
-                                        logger.warning(f"Failed to update role for {name}: {e}")
-                                        
-                                if department:
-                                    try:
-                                        await cur.execute(
-                                            "UPDATE author_affiliation SET department = %s WHERE author_id = %s AND affiliation_id = %s",
-                                            (department, author_id, aff_id),
-                                        )
-                                    except Exception as e:
-                                        logger.warning(f"Failed to update department for {name}: {e}")
-                                        
-                                if sd:
-                                    try:
-                                        await cur.execute(
-                                            "UPDATE author_affiliation SET start_date = LEAST(COALESCE(start_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
-                                            (sd, sd, author_id, aff_id),
-                                        )
-                                    except Exception as e:
-                                        logger.warning(f"Failed to update start_date for {name}: {e}")
-                                        
-                                if ed:
-                                    try:
-                                        await cur.execute(
-                                            "UPDATE author_affiliation SET end_date = GREATEST(COALESCE(end_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
-                                            (ed, ed, author_id, aff_id),
-                                        )
-                                    except Exception as e:
-                                        logger.warning(f"Failed to update end_date for {name}: {e}")
+                            # Note: ORCID metadata (role, department, start_date, end_date) is no longer processed
+                            # as orcid_aff_meta field has been removed from the database schema
 
             # Commit the transaction for this batch
             await conn.commit()
