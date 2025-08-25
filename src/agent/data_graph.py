@@ -261,6 +261,11 @@ async def process_single_paper(state: Dict[str, Any]) -> Dict[str, Any]:
                 data = json.loads(content)
                 mapped = []
                 author_data_by_name = { (a.get("name") or "").strip(): a for a in data.get("authors", []) }
+                
+                # 提取关键词
+                keywords = data.get("keywords", [])
+                keywords = [k.strip().lower() for k in keywords if k and k.strip()]
+                
                 for name in authors:
                     author_info = author_data_by_name.get(name, {})
                     aff = author_info.get("affiliations") or []
@@ -299,7 +304,7 @@ async def process_single_paper(state: Dict[str, Any]) -> Dict[str, Any]:
                         processing_time=processing_time
                     )
                 
-                return {"papers": [{**paper, "author_affiliations": mapped}]}
+                return {"papers": [{**paper, "author_affiliations": mapped, "keywords": keywords}]}
             except Exception as e:
                 error_msg = f"LLM processing failed: {str(e)}"
                 logger.error(f"Error processing paper {paper_id}: {error_msg}")
@@ -1019,6 +1024,39 @@ async def _process_paper_batch(
                                 ON CONFLICT (paper_id, category_id) DO NOTHING
                                 """,
                                 (paper_id, category_id),
+                            )
+
+                    # Keywords and paper_keyword
+                    for keyword in p.get("keywords", []):
+                        if not keyword or not keyword.strip():
+                            continue
+                        keyword = keyword.strip().lower()  # 标准化关键词
+                        keyword_id = None
+                        await cur.execute("SELECT id FROM keywords WHERE keyword = %s LIMIT 1", (keyword,))
+                        rowk = await cur.fetchone()
+                        if rowk:
+                            keyword_id = rowk[0]
+                        else:
+                            await cur.execute(
+                                "INSERT INTO keywords (keyword) VALUES (%s) ON CONFLICT (keyword) DO NOTHING RETURNING id",
+                                (keyword,),
+                            )
+                            rowk2 = await cur.fetchone()
+                            if rowk2:
+                                keyword_id = rowk2[0]
+                            else:
+                                await cur.execute("SELECT id FROM keywords WHERE keyword = %s LIMIT 1", (keyword,))
+                                rowk3 = await cur.fetchone()
+                                if rowk3:
+                                    keyword_id = rowk3[0]
+                        if keyword_id is not None:
+                            await cur.execute(
+                                """
+                                INSERT INTO paper_keyword (paper_id, keyword_id)
+                                VALUES (%s, %s)
+                                ON CONFLICT (paper_id, keyword_id) DO NOTHING
+                                """,
+                                (paper_id, keyword_id),
                             )
 
                     # Affiliations and author_affiliation

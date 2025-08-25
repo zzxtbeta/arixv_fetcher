@@ -334,5 +334,19 @@
     "api_exhausted_time": null,
     "current_api_key_index": 0,
     "error_message": null
+  },
+  "batch_20250825_153814": {
+    "session_id": "batch_20250825_153814",
+    "source_file": "api_upload",
+    "total_papers": 1,
+    "processed_papers": 2,
+    "failed_papers": 0,
+    "skipped_papers": 0,
+    "start_time": "2025-08-25T15:38:14.388803+00:00",
+    "last_update_time": "2025-08-25T15:38:56.864186+00:00",
+    "status": "completed",
+    "api_exhausted_time": null,
+    "current_api_key_index": 0,
+    "error_message": null
   }
 }
