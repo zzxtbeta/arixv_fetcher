@@ -41,6 +41,25 @@ async def lifespan(app: FastAPI):
         await CheckpointerManager.initialize(DATABASE_URL)
         logger.info("Async checkpointer initialized successfully")
         
+        # Initialize database connection and create tables if needed
+        from src.db.database import DatabaseManager
+        from src.agent.utils import create_schema_if_not_exists
+        
+        await DatabaseManager.initialize(DATABASE_URL)
+        pool = await DatabaseManager.get_pool()
+        
+        # Check and create database tables on startup
+        try:
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    logger.info("Checking database schema on startup...")
+                    await create_schema_if_not_exists(cur)
+                    logger.info("Database schema check completed successfully")
+        except Exception as e:
+            logger.error(f"Failed to check/create database schema: {str(e)}")
+            # Don't raise here, as the app might still work with existing tables
+            # But log the error for debugging
+        
         # Get the checkpointer instance
         checkpointer = await CheckpointerManager.get_checkpointer()
         
