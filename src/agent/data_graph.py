@@ -1064,7 +1064,7 @@ async def _process_paper_batch(
 
                             # Enrich with QS rankings and country if available
                             await enrich_affiliation_from_qs(cur, aff_id, cleaned, qs_map, qs_names, qs_sys_ids)
-                            # Upsert author_affiliation: only maintain latest_time; leave role/start_date/end_date as NULL for now
+                            # Upsert author_affiliation: only maintain latest_time; preserve existing role/start_date/end_date from ORCID enrichment
                             pub_dt = published_date
                             await cur.execute(
                                 """

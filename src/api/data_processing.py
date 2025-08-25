@@ -711,6 +711,7 @@ async def enrich_orcid_for_author(request: Request, author_id: int) -> dict:
     - Fetch author's name and known affiliations from DB
     - Search ORCID candidates with strict name match
     - Update author.orcid if found
+    - Update author_affiliation.role/start_date/end_date based on ORCID data
     """
     from src.db.database import DatabaseManager
     from src.agent.utils import orcid_search_and_pick, best_aff_match_for_institution, parse_orcid_date
@@ -722,6 +723,7 @@ async def enrich_orcid_for_author(request: Request, author_id: int) -> dict:
         pool = await DatabaseManager.get_pool()
         
         orcid_updated = False
+        affiliations_updated = 0
         
         async with pool.connection() as conn:
             async with conn.cursor() as cur:
@@ -736,51 +738,84 @@ async def enrich_orcid_for_author(request: Request, author_id: int) -> dict:
                 
                 author_name, current_orcid = author_row
                 
-                # Skip if ORCID already exists
-                if current_orcid:
-                    return {
-                        "status": "success",
-                        "author_id": author_id,
-                        "author_name": author_name,
-                        "orcid_updated": False,
-                        "current_orcid": current_orcid,
-                        "message": "ORCID already exists"
-                    }
-                
                 # Get author's affiliations
                 await cur.execute(
                     """
-                    SELECT a.aff_name
+                    SELECT aa.affiliation_id, a.aff_name, aa.role, aa.start_date, aa.end_date
                     FROM author_affiliation aa 
                     JOIN affiliations a ON aa.affiliation_id = a.id 
                     WHERE aa.author_id = %s
-                    LIMIT 1
                     """,
                     (author_id,)
                 )
-                aff_row = await cur.fetchone()
+                aff_rows = await cur.fetchall()
                 
-                if aff_row:
-                    aff_name = aff_row[0]
+                if aff_rows:
+                    # Use first affiliation for ORCID search
+                    aff_name = aff_rows[0][1]
+                    
                     # Search ORCID
                     info = orcid_search_and_pick(author_name, aff_name, 10)
                     if info:
-                        # Update author ORCID if found
+                        # Update author ORCID if not exists
                         orcid_id = info.get("orcid_id")
-                        if orcid_id:
+                        if orcid_id and not current_orcid:
                             await cur.execute(
                                 "UPDATE authors SET orcid = %s WHERE id = %s",
                                 (orcid_id, author_id)
                             )
                             orcid_updated = True
                             current_orcid = orcid_id
+                        
+                        # Update affiliation data for each affiliation
+                        for aff_id, aff_name_db, current_role, current_start, current_end in aff_rows:
+                            # Find best matching affiliation in ORCID data
+                            best = best_aff_match_for_institution(aff_name_db, info)
+                            if best:
+                                # Prepare update data
+                                role_title = (best.get("role") or "").strip()
+                                department = (best.get("department") or "").strip()
+                                
+                                # Combine role and department for complete role information
+                                if role_title and department:
+                                    role = f"{role_title} ({department})"
+                                elif role_title:
+                                    role = role_title
+                                else:
+                                    role = None
+                                    
+                                start_date = parse_orcid_date(best.get("start_date") or "")
+                                end_date = parse_orcid_date(best.get("end_date") or "")
+                                
+                                # Update role if not exists
+                                if role and not current_role:
+                                    await cur.execute(
+                                        "UPDATE author_affiliation SET role = %s WHERE author_id = %s AND affiliation_id = %s",
+                                        (role, author_id, aff_id)
+                                    )
+                                    affiliations_updated += 1
+                                
+                                # Update start_date (keep earliest)
+                                if start_date:
+                                    await cur.execute(
+                                        "UPDATE author_affiliation SET start_date = LEAST(COALESCE(start_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
+                                        (start_date, start_date, author_id, aff_id)
+                                    )
+                                
+                                # Update end_date (keep latest)
+                                if end_date:
+                                    await cur.execute(
+                                        "UPDATE author_affiliation SET end_date = GREATEST(COALESCE(end_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
+                                        (end_date, end_date, author_id, aff_id)
+                                    )
         
         return {
             "status": "success",
             "author_id": author_id,
             "author_name": author_name,
             "orcid_updated": orcid_updated,
-            "current_orcid": current_orcid
+            "current_orcid": current_orcid,
+            "affiliations_updated": affiliations_updated
         }
         
     except HTTPException:
