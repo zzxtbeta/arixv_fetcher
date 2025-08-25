@@ -1,7 +1,7 @@
-import { Card, Input, List, Tag, Typography, Space, message } from 'antd'
+import { Card, Input, List, Tag, Typography, Space, message, Button } from 'antd'
 import { useState } from 'react'
 import { searchAuthor } from '../api'
-import { ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons'
+import { ArrowUpOutlined, ArrowDownOutlined, DownloadOutlined } from '@ant-design/icons'
 import { CalendarOutlined } from '@ant-design/icons'
 
 export default function AuthorSearch() {
@@ -41,9 +41,50 @@ export default function AuthorSearch() {
     }
   }
 
+  async function handleExportAuthors() {
+    try {
+      message.loading('正在导出数据...', 0)
+      const response = await fetch('/dashboard/export-authors')
+      const data = await response.json()
+      
+      if (response.ok && data.success) {
+        // Create and download JSON file
+        const jsonString = JSON.stringify(data.data, null, 2)
+        const blob = new Blob([jsonString], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `authors_export_${new Date().toISOString().split('T')[0]}.json`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        URL.revokeObjectURL(url)
+        
+        message.destroy()
+        message.success(`成功导出 ${data.total_count} 条作者数据`)
+      } else {
+        throw new Error(data.detail || '导出失败')
+      }
+    } catch (error: any) {
+      console.error('Export error:', error)
+      message.destroy()
+      message.error('导出失败，请重试')
+    }
+  }
+
   return (
     <Card title="Author Search" extra={<Typography.Text type="secondary">Case-insensitive fuzzy</Typography.Text>}>
       <Space direction="vertical" style={{ width: '100%' }} size="large">
+        <Space style={{ width: '100%', justifyContent: 'flex-start' }}>
+          <Button 
+            type="primary" 
+            icon={<DownloadOutlined />} 
+            onClick={handleExportAuthors}
+          >
+            导出作者数据为JSON
+          </Button>
+        </Space>
         <Input.Search placeholder="Type an author name..." enterButton loading={loading} onSearch={onSearch} />
         <List
           loading={loading}
@@ -125,4 +166,4 @@ export default function AuthorSearch() {
       </Space>
     </Card>
   )
-} 
+}

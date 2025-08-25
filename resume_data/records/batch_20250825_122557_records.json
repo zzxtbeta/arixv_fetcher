@@ -1,0 +1,10 @@
+{
+  "http://localhost:5173/": {
+    "paper_id": "http://localhost:5173/",
+    "status": "pending",
+    "attempts": 0,
+    "last_attempt_time": null,
+    "error_message": null,
+    "processing_time": null
+  }
+}

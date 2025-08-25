@@ -1,5 +1,5 @@
-import { Card, List, Typography, Space, Tag, Pagination, Button, InputNumber, Select, message, Input, DatePicker, Upload } from 'antd'
-import { UploadOutlined } from '@ant-design/icons'
+import { Card, List, Typography, Space, Tag, Pagination, Button, InputNumber, Select, message, Input, DatePicker, Upload, Tooltip } from 'antd'
+import { UploadOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
 import { getLatestPapers, triggerFetch, triggerFetchById } from '../api'
 import dayjs from 'dayjs'
@@ -166,62 +166,88 @@ export default function LatestPapers() {
     <Card
       title={getCardTitle()}
       extra={
-        <Space wrap>
-          <Typography.Text type="secondary">Date Range</Typography.Text>
-          <DatePicker.RangePicker
-            disabledDate={disabledEndDate}
-            value={[dayjs(dateRange[0]), dayjs(dateRange[1])]}
-            onChange={(vals) => {
-              const start = vals?.[0]?.format('YYYY-MM-DD') || dateRange[0]
-              const end = vals?.[1]?.format('YYYY-MM-DD') || dateRange[1]
-              setDateRange([start, end])
-            }}
-          />
-          <Typography.Text type="secondary">Categories</Typography.Text>
-          <Select
-            style={{ width: 200 }}
-            value={categories}
-            onChange={setCategories}
-            options={[
-              { label: 'AI + CV', value: 'cs.AI,cs.CV' },
-              { label: 'ALL', value: 'all' },
-              { label: 'AI only', value: 'cs.AI' },
-              { label: 'CV only', value: 'cs.CV' },
-              { label: 'ML (cs.LG)', value: 'cs.LG' },
-              { label: 'NLP (cs.CL)', value: 'cs.CL' },
-              { label: 'IR (cs.IR)', value: 'cs.IR' },
-              { label: 'HCI (cs.HC)', value: 'cs.HC' },
-              { label: 'Robotics (cs.RO)', value: 'cs.RO' },
-              { label: 'Security (cs.CR)', value: 'cs.CR' },
-              { label: 'Databases (cs.DB)', value: 'cs.DB' },
-              { label: 'Data Structures/Algorithms (cs.DS)', value: 'cs.DS' },
-              { label: 'Graphics (cs.GR)', value: 'cs.GR' },
-              { label: 'Distributed/Cluster (cs.DC)', value: 'cs.DC' },
-              { label: 'Operating Systems (cs.OS)', value: 'cs.OS' },
-              { label: 'Networking (cs.NI)', value: 'cs.NI' },
-              { label: 'Theory/Complexity (cs.CC)', value: 'cs.CC' },
-              { label: 'Logic (cs.LO)', value: 'cs.LO' },
-              { label: 'Computational Geometry (cs.CG)', value: 'cs.CG' },
-              // useful combined presets
-              { label: 'AI + ML + NLP + CV', value: 'cs.AI,cs.LG,cs.CL,cs.CV' },
-            ]}
-          />
-          <Typography.Text type="secondary">Max</Typography.Text>
-          <InputNumber min={10} max={200} step={10} value={maxResults} onChange={(v) => setMaxResults(Number(v))} />
-          <Button type="primary" loading={fetching} onClick={onTrigger}>Fetch & Refresh</Button>
-          <Upload
-            accept=".json"
-            showUploadList={false}
-            beforeUpload={(file) => {
-              onTriggerByJson(file)
-              return false // Prevent default upload
-            }}
-          >
-            <Button loading={fetchingByJson} icon={<UploadOutlined />}>Upload JSON</Button>
-          </Upload>
-          <Typography.Text type="secondary">arXiv ID(s)</Typography.Text>
-          <Input placeholder="e.g. 2504.14636,2504.14645" value={ids} onChange={(e) => setIds(e.target.value)} style={{ width: 240 }} />
-          <Button loading={fetchingById} onClick={onTriggerById}>Fetch by ID</Button>
+        <Space direction="vertical" size="middle">
+          <Space wrap>
+            <Typography.Text type="secondary">Date Range</Typography.Text>
+            <DatePicker.RangePicker
+              disabledDate={disabledEndDate}
+              value={[dayjs(dateRange[0]), dayjs(dateRange[1])]}
+              onChange={(vals) => {
+                const start = vals?.[0]?.format('YYYY-MM-DD') || dateRange[0]
+                const end = vals?.[1]?.format('YYYY-MM-DD') || dateRange[1]
+                setDateRange([start, end])
+              }}
+            />
+            <Typography.Text type="secondary">Categories</Typography.Text>
+            <Select
+              style={{ width: 200 }}
+              value={categories}
+              onChange={setCategories}
+              options={[
+                { label: 'AI + CV', value: 'cs.AI,cs.CV' },
+                { label: 'ALL', value: 'all' },
+                { label: 'AI only', value: 'cs.AI' },
+                { label: 'CV only', value: 'cs.CV' },
+                { label: 'ML (cs.LG)', value: 'cs.LG' },
+                { label: 'NLP (cs.CL)', value: 'cs.CL' },
+                { label: 'IR (cs.IR)', value: 'cs.IR' },
+                { label: 'HCI (cs.HC)', value: 'cs.HC' },
+                { label: 'Robotics (cs.RO)', value: 'cs.RO' },
+                { label: 'Security (cs.CR)', value: 'cs.CR' },
+                { label: 'Databases (cs.DB)', value: 'cs.DB' },
+                { label: 'Data Structures/Algorithms (cs.DS)', value: 'cs.DS' },
+                { label: 'Graphics (cs.GR)', value: 'cs.GR' },
+                { label: 'Distributed/Cluster (cs.DC)', value: 'cs.DC' },
+                { label: 'Operating Systems (cs.OS)', value: 'cs.OS' },
+                { label: 'Networking (cs.NI)', value: 'cs.NI' },
+                { label: 'Theory/Complexity (cs.CC)', value: 'cs.CC' },
+                { label: 'Logic (cs.LO)', value: 'cs.LO' },
+                { label: 'Computational Geometry (cs.CG)', value: 'cs.CG' },
+                // useful combined presets
+                { label: 'AI + ML + NLP + CV', value: 'cs.AI,cs.LG,cs.CL,cs.CV' },
+              ]}
+            />
+            <Typography.Text type="secondary">Max</Typography.Text>
+            <InputNumber min={10} max={200} step={10} value={maxResults} onChange={(v) => setMaxResults(Number(v))} />
+            <Button type="primary" loading={fetching} onClick={onTrigger}>Fetch & Refresh</Button>
+            <Typography.Text type="secondary">arXiv ID(s)</Typography.Text>
+            <Input placeholder="e.g. 2504.14636,2504.14645" value={ids} onChange={(e) => setIds(e.target.value)} style={{ width: 240 }} />
+            <Button loading={fetchingById} onClick={onTriggerById}>Fetch by ID</Button>
+          </Space>
+          <Space wrap>
+             <Upload
+               accept=".json"
+               showUploadList={false}
+               beforeUpload={(file) => {
+                 onTriggerByJson(file)
+                 return false // Prevent default upload
+               }}
+             >
+               <Button loading={fetchingByJson} icon={<UploadOutlined />}>Upload JSON</Button>
+             </Upload>
+             <Tooltip
+               title={
+                 <div>
+                   <div>JSON format example:</div>
+                   <pre style={{ margin: '8px 0', fontSize: '12px' }}>
+{`[
+  {
+    "id": "2504.12526v1",
+    "title": "MOM: Memory-Efficient Offloaded Mini-Sequence Inference for Long Context Language Models"
+  },
+  {
+    "id": "2504.14775v2",
+    "title": "gLLM: Global Balanced Pipeline Parallelism System for Distributed LLM Serving with Token Throttling"
+  }
+]`}
+                   </pre>
+                 </div>
+               }
+               placement="bottom"
+             >
+               <InfoCircleOutlined style={{ color: '#1890ff', cursor: 'help' }} />
+             </Tooltip>
+           </Space>
         </Space>
       }
       style={{ background: '#ffffff', borderRadius: 12 }}

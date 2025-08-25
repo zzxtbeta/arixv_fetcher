@@ -544,3 +544,78 @@ async def search_person_role(
     except Exception as e:
         print(f"Role search API error: {e}")
         raise HTTPException(status_code=500, detail=f"Role search failed: {str(e)}")
+
+
+@router.get("/export-authors")
+async def export_authors() -> Dict[str, Any]:
+    """Export all authors data with their affiliations and roles in JSON format."""
+    try:
+        # Get all authors
+        authors = supabase_client.select(
+            table="authors",
+            columns="id, author_name_en, author_name_cn, email, orcid, citations, h_index, i10_index",
+            order_by=("id", True)
+        ) or []
+        
+        result = []
+        
+        for author in authors:
+            author_id = author.get("id")
+            
+            # Get author's affiliations and roles
+            aff_links = supabase_client.select(
+                "author_affiliation", 
+                filters={"author_id": author_id}, 
+                columns="affiliation_id, role"
+            ) or []
+            
+            # Get affiliation details
+            affiliations = []
+            if aff_links:
+                aff_ids = [link.get("affiliation_id") for link in aff_links if link.get("affiliation_id")]
+                if aff_ids:
+                    affs = supabase_client.select_in(
+                        "affiliations", 
+                        "id", 
+                        aff_ids, 
+                        columns="id, aff_name"
+                    ) or []
+                    
+                    # Create mapping of affiliation_id to name
+                    aff_id_to_name = {aff.get("id"): aff.get("aff_name") for aff in affs}
+                    
+                    # Build affiliations list with roles
+                    for link in aff_links:
+                        aff_id = link.get("affiliation_id")
+                        role = link.get("role")
+                        aff_name = aff_id_to_name.get(aff_id)
+                        
+                        affiliations.append({
+                            "affiliation": aff_name or "Unknown",
+                            "role": role or "Unknown"
+                        })
+            
+            # Build author data with "Unknown" for empty fields
+            author_data = {
+                "id": str(author.get("id", "Unknown")),
+                "author_name_en": author.get("author_name_en") or "Unknown",
+                "author_name_cn": author.get("author_name_cn") or "Unknown",
+                "email": author.get("email") or "Unknown",
+                "orcid": author.get("orcid") or "Unknown",
+                "citations": author.get("citations") or 0,
+                "h_index": author.get("h_index") or 0,
+                "i10_index": author.get("i10_index") or 0,
+                "affiliations": affiliations if affiliations else [{"affiliation": "Unknown", "role": "Unknown"}]
+            }
+            
+            result.append(author_data)
+        
+        return {
+            "success": True,
+            "data": result,
+            "total_count": len(result)
+        }
+        
+    except Exception as e:
+        print(f"Export authors API error: {e}")
+        raise HTTPException(status_code=500, detail=f"Export authors failed: {str(e)}")
