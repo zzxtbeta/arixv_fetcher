@@ -45,12 +45,18 @@ def parse_db_url(url: str) -> dict:
     Parse a PostgreSQL connection URL into component parts
 
     Args:
-        url: Database connection URL in format postgresql://user:pass@host:port/dbname
+        url: Database connection URL in format postgresql://user:pass@host:port/dbname?param=value
 
     Returns:
         Dictionary with connection parameters
     """
     try:
+        # 分离基本URL和查询参数
+        if '?' in url:
+            base_url, query_string = url.split('?', 1)
+        else:
+            base_url, query_string = url, ""
+        
         regex = (
             r"^postgres(?:ql)?://"
             r"(?P<user>[^:@/]+)"
@@ -59,20 +65,31 @@ def parse_db_url(url: str) -> dict:
             r"(?:\:(?P<port>\d+))?"
             r"/(?P<dbname>[^/?#]+)"
         )
-        m = re.match(regex, url)
+        m = re.match(regex, base_url)
         if not m:
             logger.warning(f"Failed to parse DATABASE_URL: {url!r}")
             return {}
+        
         cfg = m.groupdict()
         cfg["password"] = cfg.get("password") or ""
         if cfg.get("port") is None:
             cfg["port"] = "5432"
+        
+        # 解析查询参数
+        if query_string:
+            for param in query_string.split('&'):
+                if '=' in param:
+                    key, value = param.split('=', 1)
+                    cfg[key] = value
+        
         return {
             "dbname": cfg["dbname"],
             "user": cfg["user"],
             "password": cfg["password"],
             "host": cfg["host"],
             "port": cfg["port"],
+            # 添加查询参数到配置中
+            **{k: v for k, v in cfg.items() if k not in ["dbname", "user", "password", "host", "port"]}
         }
     except Exception as e:
         logger.error(f"Error parsing DATABASE_URL: {e}")
@@ -154,13 +171,16 @@ class DatabaseManager:
                 "Database URI is not set. Please provide db_uri parameter or set DB_URI environment variable"
             )
 
+        # 解析URL获取配置参数
+        url_config = parse_db_url(uri_to_use)
+        
         connection_kwargs = {
             "autocommit": True,
             # Avoid psycopg auto-prepared statements to prevent duplicate prepared statement errors
             # during LangGraph checkpointer setup.
             "prepare_threshold": None,
             "connect_timeout": 10,
-            "sslmode": "require",
+            "sslmode": url_config.get("sslmode") or os.getenv("SSLMODE", "require"),
             "gssencmode": "disable",
         }
 
