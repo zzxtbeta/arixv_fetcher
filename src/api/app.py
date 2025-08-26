@@ -15,6 +15,7 @@ if sys.platform == "win32":
 from src.db.checkpoints import CheckpointerManager
 from src.agent.graph import build_graph
 from src.agent.data_graph import build_data_processing_graph
+from src.agent.utils import create_schema_if_not_exists
 from src.api.graph import router as graph_router
 from src.api.data_processing import router as data_processing_router
 from src.api.dashboard import router as dashboard_router
@@ -40,6 +41,14 @@ async def lifespan(app: FastAPI):
         # Initialize the async checkpointer
         await CheckpointerManager.initialize(DATABASE_URL)
         logger.info("Async checkpointer initialized successfully")
+        
+        # Create database schema if not exists
+        from src.db.database import DatabaseManager
+        await DatabaseManager.initialize(DATABASE_URL)
+        async with DatabaseManager.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await create_schema_if_not_exists(cur)
+                logger.info("Database schema created/verified successfully")
         
         # Get the checkpointer instance
         checkpointer = await CheckpointerManager.get_checkpointer()
@@ -104,4 +113,4 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.get("/")
 async def root():
     """Root endpoint to check if API is running."""
-    return {"message": "ArXiv Scraper API is running"} 
+    return {"message": "ArXiv Scraper API is running"}

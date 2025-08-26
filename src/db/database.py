@@ -45,35 +45,36 @@ def parse_db_url(url: str) -> dict:
     Parse a PostgreSQL connection URL into component parts
 
     Args:
-        url: Database connection URL in format postgresql://user:pass@host:port/dbname
+        url: Database connection URL in format postgresql://user:pass@host:port/dbname?param=value
 
     Returns:
-        Dictionary with connection parameters
+        Dictionary with connection parameters including query parameters
     """
     try:
-        regex = (
-            r"^postgres(?:ql)?://"
-            r"(?P<user>[^:@/]+)"
-            r"(?:\:(?P<password>[^@/]*))?@"
-            r"(?P<host>[^:/]+)"
-            r"(?:\:(?P<port>\d+))?"
-            r"/(?P<dbname>[^/?#]+)"
-        )
-        m = re.match(regex, url)
-        if not m:
-            logger.warning(f"Failed to parse DATABASE_URL: {url!r}")
+        from urllib.parse import urlparse, parse_qs
+        
+        parsed = urlparse(url)
+        if not parsed.scheme or parsed.scheme not in ['postgresql', 'postgres']:
+            logger.warning(f"Invalid scheme in DATABASE_URL: {url!r}")
             return {}
-        cfg = m.groupdict()
-        cfg["password"] = cfg.get("password") or ""
-        if cfg.get("port") is None:
-            cfg["port"] = "5432"
-        return {
-            "dbname": cfg["dbname"],
-            "user": cfg["user"],
-            "password": cfg["password"],
-            "host": cfg["host"],
-            "port": cfg["port"],
+            
+        cfg = {
+            "dbname": parsed.path.lstrip('/') if parsed.path else "",
+            "user": parsed.username or "",
+            "password": parsed.password or "",
+            "host": parsed.hostname or "",
+            "port": str(parsed.port) if parsed.port else "5432",
         }
+        
+        # Parse query parameters for SSL and other connection options
+        if parsed.query:
+            query_params = parse_qs(parsed.query)
+            # Extract single values from query parameters
+            for key, values in query_params.items():
+                if values:  # Take the first value if multiple exist
+                    cfg[key] = values[0]
+        
+        return cfg
     except Exception as e:
         logger.error(f"Error parsing DATABASE_URL: {e}")
         return {}
@@ -157,15 +158,25 @@ class DatabaseManager:
                 "Database URI is not set. Please provide db_uri parameter or set DB_URI environment variable"
             )
 
+        # Parse URL to extract connection parameters including SSL settings
+        url_params = parse_db_url(uri_to_use) if uri_to_use else {}
+        
         connection_kwargs = {
             "autocommit": True,
             # Avoid psycopg auto-prepared statements to prevent duplicate prepared statement errors
             # during LangGraph checkpointer setup.
             "prepare_threshold": None,
-            "connect_timeout": 10,
-            "sslmode": "require",
-            "gssencmode": "disable",
+            "connect_timeout": int(os.getenv("DB_CONNECT_TIMEOUT", "10")),
+            # SSL mode: priority order - URL params > env var > default
+            "sslmode": url_params.get("sslmode") or os.getenv("DB_SSLMODE", "require"),
+            # GSS encryption mode: priority order - URL params > env var > default
+            "gssencmode": url_params.get("gssencmode") or os.getenv("DB_GSSENCMODE", "disable"),
         }
+        
+        # Add other connection parameters from URL if present
+        for param in ["application_name", "options", "sslcert", "sslkey", "sslrootcert"]:
+            if param in url_params:
+                connection_kwargs[param] = url_params[param]
 
         try:
             cls._async_pool = AsyncConnectionPool(

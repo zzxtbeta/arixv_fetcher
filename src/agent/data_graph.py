@@ -61,20 +61,13 @@ _BATCH_SEM = asyncio.Semaphore(_BATCH_MAX_CONCURRENCY)
 # ---------------------- Node Functions ----------------------
 
 async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) -> DataProcessingState:
-    """Fetch latest papers from arXiv by date window, explicit date range or id_list.
-    
-    Modified for streaming processing: handles batch fetching and processing.
-    """
+    """Fetch latest papers from arXiv by date window, explicit date range or id_list."""
     try:
         cfg = config.get("configurable", {}) if isinstance(config, dict) else {}
         
         # 检查是否为恢复模式
         session_id = cfg.get("session_id")
         resume_mode = cfg.get("resume_mode", False)
-        
-        # 获取批处理配置
-        batch_size = int(os.getenv("BATCH_SIZE", "10"))
-        current_batch_index = state.get("current_batch_index", 0)
         
         # Optional id_list overrides window/range query
         id_list = cfg.get("id_list")
@@ -107,10 +100,7 @@ async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) 
                     "resume_mode": resume_mode,
                     "processed_paper_ids": [],
                     "failed_paper_ids": [],
-                    "api_exhausted": False,
-                    "current_batch_index": 0,
-                    "total_papers": 0,
-                    "all_paper_ids": []
+                    "api_exhausted": False
                 }
         
         # 如果是新的批量处理且有id_list，创建会话
@@ -121,42 +111,10 @@ async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) 
             )
             logger.info(f"Created new processing session: {session_id}")
 
-        # 流式处理逻辑：分批获取和处理论文
+        # ID列表模式：直接获取所有论文
         if id_list:
-            # 获取所有论文ID列表
-            all_paper_ids = state.get("all_paper_ids", id_list)
-            total_papers = len(all_paper_ids)
-            
-            # 计算当前批次的范围
-            batch_start = current_batch_index * batch_size
-            batch_end = min(batch_start + batch_size, total_papers)
-            
-            if batch_start >= total_papers:
-                # 所有批次都已处理完成
-                logger.info(f"All batches completed. Total papers processed: {total_papers}")
-                return {
-                    "processing_status": "completed",
-                    "raw_papers": [],
-                    "fetched": 0,
-                    "papers": [],
-                    "categories": categories,
-                    "session_id": session_id,
-                    "resume_mode": resume_mode,
-                    "processed_paper_ids": state.get("processed_paper_ids", []),
-                    "failed_paper_ids": state.get("failed_paper_ids", []),
-                    "api_exhausted": False,
-                    "current_batch_index": current_batch_index,
-                    "total_papers": total_papers,
-                    "all_paper_ids": all_paper_ids
-                }
-            
-            # 获取当前批次的论文ID
-            current_batch_ids = all_paper_ids[batch_start:batch_end]
-            logger.info(f"Processing batch {current_batch_index + 1}/{(total_papers + batch_size - 1) // batch_size}: papers {batch_start + 1}-{batch_end}")
-            
-            # 获取当前批次的论文数据
-            raw = await asyncio.to_thread(search_papers_by_ids, current_batch_ids)
-            logger.info(f"arXiv fetch batch {current_batch_index + 1}: fetched {len(raw)} papers")
+            raw = await asyncio.to_thread(search_papers_by_ids, id_list)
+            logger.info(f"arXiv fetch by IDs: fetched {len(raw)} papers")
             
             return {
                 "processing_status": "fetched",
@@ -168,13 +126,10 @@ async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) 
                 "resume_mode": resume_mode,
                 "processed_paper_ids": state.get("processed_paper_ids", []),
                 "failed_paper_ids": state.get("failed_paper_ids", []),
-                "api_exhausted": False,
-                "current_batch_index": current_batch_index,
-                "total_papers": total_papers,
-                "all_paper_ids": all_paper_ids
+                "api_exhausted": False
             }
         else:
-            # 非ID列表模式：按日期范围或窗口获取（保持原有逻辑）
+            # 非ID列表模式：按日期范围或窗口获取
             if start_date and end_date:
                 try:
                     sd = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
@@ -204,10 +159,7 @@ async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) 
                 "resume_mode": resume_mode,
                 "processed_paper_ids": [],
                 "failed_paper_ids": [],
-                "api_exhausted": False,
-                "current_batch_index": 0,
-                "total_papers": len(raw),
-                "all_paper_ids": [p.get("id") for p in raw if p.get("id")]
+                "api_exhausted": False
             }
     except Exception as e:
         return {"processing_status": "error", "error_message": str(e)}
@@ -635,59 +587,21 @@ def dispatch_orcid_processing(state: DataProcessingState):
     return jobs
 
 async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> DataProcessingState:
-    """Create normalized schema and insert papers/authors/categories/affiliations.
-    
-    Modified for streaming processing: processes current batch and prepares for next batch.
-    """
+    """Create normalized schema and insert papers/authors/categories/affiliations."""
     try:
-        # Allow upsert if we have papers to process, regardless of current status
         papers: List[Dict[str, Any]] = state.get("papers", []) or []
         raw_papers: List[Dict[str, Any]] = state.get("raw_papers", []) or []
-        session_id = state.get("session_id")
-        api_exhausted = state.get("api_exhausted", False)
-        current_batch_index = state.get("current_batch_index", 0)
-        total_papers = state.get("total_papers", 0)
-        all_paper_ids = state.get("all_paper_ids", [])
-        processed_paper_ids = state.get("processed_paper_ids", [])
-        failed_paper_ids = state.get("failed_paper_ids", [])
         
         # Use papers if available, otherwise use raw_papers
         papers_to_process = papers if papers else raw_papers
         
         if not papers_to_process:
-            # 检查是否还有更多批次需要处理
-            batch_size = int(os.getenv("BATCH_SIZE", "10"))
-            next_batch_index = current_batch_index + 1
-            
-            if next_batch_index * batch_size >= total_papers:
-                # 所有批次都已完成
-                result = {
-                    "processing_status": "completed",
-                    "inserted": len(processed_paper_ids),
-                    "skipped": 0,
-                    "fetched": state.get("fetched", 0),
-                    "current_batch_index": next_batch_index,
-                    "total_papers": total_papers,
-                    "all_paper_ids": all_paper_ids,
-                    "processed_paper_ids": processed_paper_ids,
-                    "failed_paper_ids": failed_paper_ids
-                }
-                if api_exhausted:
-                    result["processing_status"] = "api_quota_exhausted"
-                return result
-            else:
-                # 还有更多批次，返回batch_completed状态
-                return {
-                    "processing_status": "batch_completed",
-                    "inserted": 0,
-                    "skipped": 0,
-                    "fetched": state.get("fetched", 0),
-                    "current_batch_index": next_batch_index,
-                    "total_papers": total_papers,
-                    "all_paper_ids": all_paper_ids,
-                    "processed_paper_ids": processed_paper_ids,
-                    "failed_paper_ids": failed_paper_ids
-                }
+            return {
+                "processing_status": "completed",
+                "inserted": 0,
+                "skipped": 0,
+                "fetched": state.get("fetched", 0)
+            }
         
         db_uri = os.getenv("DATABASE_URL")
         if not db_uri:
@@ -696,125 +610,42 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
         await DatabaseManager.initialize(db_uri)
         pool = await DatabaseManager.get_pool()
 
-        # 处理当前批次的论文
-        logger.info(f"Processing current batch {current_batch_index + 1}: {len(papers_to_process)} papers")
+        logger.info(f"Processing {len(papers_to_process)} papers")
         
         try:
             # 使用信号量限制并发批次数量，避免过多数据库连接
             async with _BATCH_SEM:
-                batch_inserted, batch_skipped = await _process_paper_batch(
-                    papers_to_process, pool, session_id
+                inserted, skipped = await _process_paper_batch(
+                    papers_to_process, pool
                 )
             
-            # 更新已处理的论文ID
-            for paper in papers_to_process:
-                paper_id = paper.get("id")
-                if paper_id and paper_id not in processed_paper_ids:
-                    processed_paper_ids.append(paper_id)
+            logger.info(f"Processing completed: {inserted} inserted, {skipped} skipped")
             
-            logger.info(f"Batch {current_batch_index + 1} completed: {batch_inserted} inserted, {batch_skipped} skipped")
-            
-            # 更新会话进度
-            if session_id:
-                resume_manager.update_session_progress(
-                    session_id,
-                    processed_count=len(processed_paper_ids),
-                    failed_count=len(failed_paper_ids)
-                )
+            return {
+                "processing_status": "completed",
+                "inserted": inserted,
+                "skipped": skipped,
+                "fetched": state.get("fetched", 0)
+            }
                     
         except Exception as e:
-            logger.error(f"Error processing batch {current_batch_index + 1}: {str(e)}")
-            
-            # 将当前批次的论文标记为失败
-            for paper in papers_to_process:
-                paper_id = paper.get("id")
-                if paper_id and paper_id not in failed_paper_ids:
-                    failed_paper_ids.append(paper_id)
-            
-            # 更新会话进度
-            if session_id:
-                resume_manager.update_session_progress(
-                    session_id,
-                    processed_count=len(processed_paper_ids),
-                    failed_count=len(failed_paper_ids),
-                    error_message=f"Batch {current_batch_index + 1} failed: {str(e)}"
-                )
-            
-            batch_inserted = 0
-            batch_skipped = 0
-        
-        # 准备下一批次
-        batch_size = int(os.getenv("BATCH_SIZE", "10"))
-        next_batch_index = current_batch_index + 1
-        
-        # 检查是否还有更多批次需要处理
-        if next_batch_index * batch_size >= total_papers:
-            # 所有批次都已完成，更新最终会话状态
-            if session_id:
-                final_status = "completed" if len(failed_paper_ids) == 0 else "failed"
-                resume_manager.update_session_progress(
-                    session_id,
-                    processed_count=len(processed_paper_ids),
-                    failed_count=len(failed_paper_ids),
-                    status=final_status
-                )
-            
-            processing_status = "api_quota_exhausted" if api_exhausted else "completed"
-            logger.info(f"All batches completed: {len(processed_paper_ids)} papers processed, {len(failed_paper_ids)} failed")
-            
+            logger.error(f"Error processing papers: {str(e)}")
             return {
-                "processing_status": processing_status,
-                "inserted": len(processed_paper_ids),
-                "skipped": 0,
-                "api_exhausted": api_exhausted,
-                "current_batch_index": next_batch_index,
-                "total_papers": total_papers,
-                "all_paper_ids": all_paper_ids,
-                "processed_paper_ids": processed_paper_ids,
-                "failed_paper_ids": failed_paper_ids
-            }
-        else:
-            # 还有更多批次需要处理
-            logger.info(f"Batch {current_batch_index + 1} completed, preparing for next batch {next_batch_index + 1}")
-            
-            return {
-                "processing_status": "batch_completed",
-                "inserted": batch_inserted,
-                "skipped": batch_skipped,
-                "api_exhausted": api_exhausted,
-                "current_batch_index": next_batch_index,
-                "total_papers": total_papers,
-                "all_paper_ids": all_paper_ids,
-                "processed_paper_ids": processed_paper_ids,
-                "failed_paper_ids": failed_paper_ids
+                "processing_status": "error",
+                "error_message": str(e),
+                "inserted": 0,
+                "skipped": 0
             }
         
     except Exception as e:
-        # 保存错误状态到会话
-        session_id = state.get("session_id")
-        if session_id:
-            resume_manager.update_session_progress(
-                session_id,
-                processed_count=len(state.get("processed_paper_ids", [])),
-                failed_count=len(state.get("failed_paper_ids", [])),
-                error_message=str(e)
-            )
-        
         return {
             "processing_status": "error",
-            "error_message": str(e),
-            "api_exhausted": state.get("api_exhausted", False),
-            "current_batch_index": state.get("current_batch_index", 0),
-            "total_papers": state.get("total_papers", 0),
-            "all_paper_ids": state.get("all_paper_ids", []),
-            "processed_paper_ids": state.get("processed_paper_ids", []),
-            "failed_paper_ids": state.get("failed_paper_ids", [])
+            "error_message": str(e)
         }
 
 async def _process_paper_batch(
     papers_batch: List[Dict[str, Any]], 
-    pool, 
-    session_id: Optional[str] = None
+    pool
 ) -> tuple[int, int]:
     """处理单个论文批次的核心逻辑"""
     inserted = 0
@@ -1137,16 +968,7 @@ def collect_single_paper_results(state: DataProcessingState) -> DataProcessingSt
     logger.info(f"Collected {len(papers)} papers from process_single_paper")
     return state
 
-def should_continue_processing(state: DataProcessingState):
-    """Determine if processing should continue to next batch or end."""
-    processing_status = state.get("processing_status")
-    
-    if processing_status == "batch_completed":
-        # Continue to next batch
-        return "fetch_arxiv_today"
-    else:
-        # End processing (completed, error, or api_quota_exhausted)
-        return END
+
 
 # Build the state graph
 builder = StateGraph(DataProcessingState)
@@ -1174,11 +996,8 @@ builder.add_conditional_edges(
 builder.add_edge("process_orcid_for_paper", "merge_paper_results")
 builder.add_edge("merge_paper_results", "upsert_papers")
 
-# Add conditional edge from upsert_papers to either continue or end
-builder.add_conditional_edges(
-    "upsert_papers",
-    should_continue_processing,
-)
+# Connect upsert_papers to end
+builder.add_edge("upsert_papers", END)
 
 data_processing_graph = builder.compile()
 

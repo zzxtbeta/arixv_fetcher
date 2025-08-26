@@ -7,7 +7,7 @@ import logging
 from typing import Optional, List
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException, Request, Query
+from fastapi import APIRouter, HTTPException, Request, Query, UploadFile, File
 from pydantic import BaseModel
 
 from src.agent.resume_manager import resume_manager
@@ -91,6 +91,7 @@ async def fetch_arxiv_today_api(
             f"categories={cats_label}, max_results={config['configurable'].get('max_results', 200)}"
         )
 
+        # 初始调用图
         result = await graph.ainvoke({}, config=config)
 
         status = result.get("processing_status")
@@ -190,6 +191,7 @@ async def fetch_arxiv_by_id_api(
         preview = ",".join(id_list[:5]) + ("..." if len(id_list) > 5 else "")
         logger.info(f"API fetch-arxiv-by-id: thread_id={actual_thread_id}, ids_count={len(id_list)}, ids_sample={preview}, session_id={config['configurable']['session_id']}")
 
+        # 初始调用图
         result = await graph.ainvoke({}, config=config)
             
         status = result.get("processing_status")
@@ -823,3 +825,141 @@ async def enrich_orcid_for_author(request: Request, author_id: int) -> dict:
     except Exception as e:
         logger.error(f"Error in enrich_orcid_for_author: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/upload-papers-json")
+async def upload_papers_json(request: Request, file: UploadFile = File(...)):
+    """Upload a JSON file containing paper IDs and start batch processing.
+    
+    JSON file format:
+    {
+        "paper_ids": ["2301.00001", "2301.00002", ...],
+        "batch_size": 10  // optional, default is 10
+    }
+    or simple array format:
+    ["2301.00001", "2301.00002", ...]
+    """
+    import json
+    import asyncio
+    from datetime import datetime, timezone
+    
+    try:
+        # Validate file type
+        if not file.filename.endswith('.json'):
+            raise HTTPException(status_code=400, detail="File must be a JSON file")
+        
+        # Read file content
+        content = await file.read()
+        try:
+            data = json.loads(content.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON format: {str(e)}")
+        
+        # Parse paper ID list
+        if isinstance(data, list):
+            # Simple array format
+            paper_ids = data
+            batch_size = 10
+        elif isinstance(data, dict):
+            # Object format
+            paper_ids = data.get("paper_ids", [])
+            batch_size = data.get("batch_size", 10)
+        else:
+            raise HTTPException(status_code=400, detail="JSON must be an array or object with 'paper_ids' field")
+        
+        # Validate paper ID list
+        if not paper_ids or not isinstance(paper_ids, list):
+            raise HTTPException(status_code=400, detail="paper_ids must be a non-empty list")
+        
+        # Clean and validate paper IDs
+        cleaned_ids = []
+        for pid in paper_ids:
+            if isinstance(pid, str) and pid.strip():
+                cleaned_ids.append(pid.strip())
+        
+        if not cleaned_ids:
+            raise HTTPException(status_code=400, detail="No valid paper IDs found")
+        
+        # Validate batch size
+        if not isinstance(batch_size, int) or batch_size < 1 or batch_size > 100:
+            batch_size = 10
+        
+        logger.info(f"Processing JSON upload: {len(cleaned_ids)} papers, batch_size={batch_size}")
+        
+        # Create batch processing session
+        session_id = resume_manager.create_session(
+            source_file=file.filename,
+            paper_ids=cleaned_ids
+        )
+        
+        # Start batch processing
+        async def process_batches():
+            """Batch processing logic: process paper ID list in batches"""
+            try:
+                graph = request.app.state.data_processing_graph
+                
+                total_papers = len(cleaned_ids)
+                total_batches = (total_papers + batch_size - 1) // batch_size
+                
+                for batch_index in range(total_batches):
+                    # Check session status
+                    session = resume_manager.get_session(session_id)
+                    if not session or session.status == "completed":
+                        break
+                    
+                    # Calculate current batch range
+                    batch_start = batch_index * batch_size
+                    batch_end = min(batch_start + batch_size, total_papers)
+                    current_batch_ids = cleaned_ids[batch_start:batch_end]
+                    
+                    logger.info(f"Processing batch {batch_index + 1}/{total_batches}: papers {batch_start + 1}-{batch_end}")
+                    
+                    # Build config
+                    config = {
+                        "configurable": {
+                            "thread_id": f"{session_id}_batch_{batch_index}",
+                            "id_list": current_batch_ids,
+                            "session_id": session_id,
+                            "resume_mode": False
+                        }
+                    }
+                    
+                    # Execute batch processing
+                    try:
+                        result = await graph.ainvoke({}, config=config)
+                        
+                        # Check processing result
+                        if result.get("processing_status") == "api_quota_exhausted":
+                            logger.warning(f"API quota exhausted at batch {batch_index + 1}")
+                            break
+                        elif result.get("processing_status") == "error":
+                            error_msg = result.get("error_message", "Unknown error")
+                            logger.error(f"Error in batch {batch_index + 1}: {error_msg}")
+                            break
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing batch {batch_index + 1}: {str(e)}")
+                        break
+                
+                logger.info(f"Batch processing completed for session {session_id}")
+                
+            except Exception as e:
+                logger.error(f"Fatal error in batch processing for session {session_id}: {str(e)}")
+        
+        # Start background task
+        asyncio.create_task(process_batches())
+        
+        return {
+            "status": "success",
+            "message": "File uploaded and batch processing started",
+            "session_id": session_id,
+            "total_papers": len(cleaned_ids),
+            "batch_size": batch_size,
+            "filename": file.filename
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing uploaded file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process uploaded file: {str(e)}")

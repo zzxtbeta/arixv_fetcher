@@ -1,0 +1,26 @@
+{
+  "2408.12345": {
+    "paper_id": "2408.12345",
+    "status": "pending",
+    "attempts": 0,
+    "last_attempt_time": null,
+    "error_message": null,
+    "processing_time": null
+  },
+  "2408.12346": {
+    "paper_id": "2408.12346",
+    "status": "pending",
+    "attempts": 0,
+    "last_attempt_time": null,
+    "error_message": null,
+    "processing_time": null
+  },
+  "2408.12347": {
+    "paper_id": "2408.12347",
+    "status": "pending",
+    "attempts": 0,
+    "last_attempt_time": null,
+    "error_message": null,
+    "processing_time": null
+  }
+}

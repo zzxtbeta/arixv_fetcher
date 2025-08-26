@@ -34,10 +34,19 @@ export async function triggerFetch({ categories, max_results, start_date, end_da
   return data as { status: string; inserted: number; skipped: number; fetched: number }
 }
 
-export async function triggerFetchById({ ids }: { ids: string }) {
+export async function triggerFetchById({ ids, resume_session_id }: { ids: string, resume_session_id?: string }) {
   const params = new URLSearchParams()
   params.set('ids', ids)
+  if (resume_session_id) {
+    params.set('resume_session_id', resume_session_id)
+  }
   const { data } = await api.post(`/data/fetch-arxiv-by-id?${params.toString()}`)
+  
+  if (data.status === 'batch_completed' && data.session_id) {
+    // Automatically poll the next batch
+    return await triggerFetchById({ ids: '', resume_session_id: data.session_id })
+  }
+  
   return data as { status: string; inserted: number; skipped: number; fetched: number }
 }
 

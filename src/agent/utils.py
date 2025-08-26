@@ -255,7 +255,7 @@ def create_llm():
     return ChatOpenAI(
         model=os.getenv("AFFILIATION_MODEL", os.getenv("QWEN_MODEL", "qwen-max")),
         api_key=os.getenv("DASHSCOPE_API_KEY"),
-        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        base_url=os.getenv("DASHSCOPE_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
         temperature=0.0,
     )
 
