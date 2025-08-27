@@ -128,51 +128,221 @@ def _normalize_name(s: str) -> str:
 
 @router.get("/author")
 async def author_search(q: str = Query(..., description="Fuzzy author name")) -> Dict[str, Any]:
-    """Search an author (case-insensitive, ignore spaces) and return details.
+    """Legacy author search endpoint - kept for backward compatibility."""
+    return await advanced_author_search(author_name=q)
 
-    - Basic author info
-    - Affiliations (distinct)
-    - Recent papers
-    - Top collaborators (co-authors by frequency)
+
+@router.get("/author/advanced")
+async def advanced_author_search(
+    author_name: Optional[str] = Query(None, description="Author name (fuzzy search)"),
+    email: Optional[str] = Query(None, description="Email address (fuzzy search)"),
+    orcid: Optional[str] = Query(None, description="ORCID ID (exact match)"),
+    paper_title: Optional[str] = Query(None, description="Paper title (fuzzy search)"),
+    affiliation_name: Optional[str] = Query(None, description="Affiliation name (fuzzy search)"),
+    role: Optional[str] = Query(None, description="Role/position (fuzzy search)"),
+    citations_min: Optional[int] = Query(None, description="Minimum citations"),
+    citations_max: Optional[int] = Query(None, description="Maximum citations"),
+    h_index_min: Optional[int] = Query(None, description="Minimum H-index"),
+    h_index_max: Optional[int] = Query(None, description="Maximum H-index"),
+    i10_index_min: Optional[int] = Query(None, description="Minimum I10-index"),
+    i10_index_max: Optional[int] = Query(None, description="Maximum I10-index"),
+    limit: int = Query(50, description="Maximum number of results")
+) -> Dict[str, Any]:
+    """Advanced author search with multiple criteria support.
+    
+    Supports searching by:
+    - Author name (fuzzy)
+    - Email (fuzzy)
+    - ORCID (exact)
+    - Paper title (fuzzy, searches authors of papers with matching titles)
+    - Affiliation name (fuzzy)
+    - Role/position (fuzzy)
+    - Citations range
+    - H-index range
+    - I10-index range
     """
     try:
-        norm_q = _normalize_name(q)
-        # Primary: ilike by original input (fast path)
-        candidates = supabase_client.select_ilike(
-            table="authors",
-            column="author_name_en",
-            pattern=f"%{q}%",
-            columns="id, author_name_en, orcid",
-            order_by=("id", True),
-            limit=100,
-        ) or []
-        # Secondary: handle inputs like "jiankeyu" vs "Jianke Yu" by space-insensitive matching
-        # Fetch a wider batch and locally filter by normalized contains
-        extra_pool = supabase_client.select(
-            table="authors",
-            columns="id, author_name_en, orcid",
-            order_by=("id", True),
-            limit=1000,
-        ) or []
-        if extra_pool:
+        # Build search conditions
+        author_ids = set()
+        search_performed = False
+        
+        # Search by author name
+        if author_name:
+            search_performed = True
+            norm_q = _normalize_name(author_name)
+            # Primary: ilike by original input
+            name_candidates = supabase_client.select_ilike(
+                table="authors",
+                column="author_name_en",
+                pattern=f"%{author_name}%",
+                columns="id",
+                limit=500,
+            ) or []
+            # Secondary: space-insensitive matching
+            extra_pool = supabase_client.select(
+                table="authors",
+                columns="id, author_name_en",
+                limit=2000,
+            ) or []
             extra_filtered = [a for a in extra_pool if norm_q in _normalize_name(a.get("author_name_en") or "")]
-        else:
-            extra_filtered = []
-        # Merge and de-duplicate by id
-        by_id = {}
-        for a in candidates + extra_filtered:
-            aid = a.get("id")
-            if aid and aid not in by_id:
-                by_id[aid] = a
-        candidates = list(by_id.values())[:100]
-        if not candidates:
-            return {"query": q, "results": []}
+            
+            name_ids = {a.get("id") for a in name_candidates + extra_filtered if a.get("id")}
+            if not author_ids:
+                author_ids = name_ids
+            else:
+                author_ids &= name_ids
+        
+        # Search by email
+        if email:
+            search_performed = True
+            email_candidates = supabase_client.select_ilike(
+                table="authors",
+                column="email",
+                pattern=f"%{email}%",
+                columns="id",
+                limit=500,
+            ) or []
+            email_ids = {a.get("id") for a in email_candidates if a.get("id")}
+            if not author_ids:
+                author_ids = email_ids
+            else:
+                author_ids &= email_ids
+        
+        # Search by ORCID
+        if orcid:
+            search_performed = True
+            orcid_candidates = supabase_client.select(
+                table="authors",
+                filters={"orcid": orcid},
+                columns="id",
+            ) or []
+            orcid_ids = {a.get("id") for a in orcid_candidates if a.get("id")}
+            if not author_ids:
+                author_ids = orcid_ids
+            else:
+                author_ids &= orcid_ids
+        
+        # Search by paper title
+        if paper_title:
+            search_performed = True
+            paper_candidates = supabase_client.select_ilike(
+                table="papers",
+                column="paper_title",
+                pattern=f"%{paper_title}%",
+                columns="id",
+                limit=500,
+            ) or []
+            paper_ids = [p.get("id") for p in paper_candidates if p.get("id")]
+            if paper_ids:
+                author_paper_links = supabase_client.select_in(
+                    table="author_paper",
+                    column="paper_id",
+                    values=paper_ids,
+                    columns="author_id",
+                ) or []
+                paper_author_ids = {ap.get("author_id") for ap in author_paper_links if ap.get("author_id")}
+            else:
+                paper_author_ids = set()
+            
+            if not author_ids:
+                author_ids = paper_author_ids
+            else:
+                author_ids &= paper_author_ids
+        
+        # Search by affiliation name
+        if affiliation_name:
+            search_performed = True
+            aff_candidates = supabase_client.select_ilike(
+                table="affiliations",
+                column="aff_name",
+                pattern=f"%{affiliation_name}%",
+                columns="id",
+                limit=500,
+            ) or []
+            aff_ids = [a.get("id") for a in aff_candidates if a.get("id")]
+            if aff_ids:
+                author_aff_links = supabase_client.select_in(
+                    table="author_affiliation",
+                    column="affiliation_id",
+                    values=aff_ids,
+                    columns="author_id",
+                ) or []
+                aff_author_ids = {aa.get("author_id") for aa in author_aff_links if aa.get("author_id")}
+            else:
+                aff_author_ids = set()
+            
+            if not author_ids:
+                author_ids = aff_author_ids
+            else:
+                author_ids &= aff_author_ids
+        
+        # Search by role
+        if role:
+            search_performed = True
+            role_links = supabase_client.select_ilike(
+                table="author_affiliation",
+                column="role",
+                pattern=f"%{role}%",
+                columns="author_id",
+                limit=500,
+            ) or []
+            role_author_ids = {rl.get("author_id") for rl in role_links if rl.get("author_id")}
+            
+            if not author_ids:
+                author_ids = role_author_ids
+            else:
+                author_ids &= role_author_ids
+        
+        # If no search criteria provided, return empty results
+        if not search_performed:
+            return {"results": [], "total": 0, "message": "Please provide at least one search criterion"}
+        
+        # Convert to list and limit
+        author_ids = list(author_ids)[:limit * 2]  # Get more for filtering
+        
+        if not author_ids:
+            return {"results": [], "total": 0}
 
+        # Fetch author details with metrics
+        authors_data = supabase_client.select_in(
+            table="authors",
+            column="id",
+            values=author_ids,
+            columns="id, author_name_en, author_name_cn, email, orcid, citations, h_index, i10_index",
+        ) or []
+        
+        # Apply numeric filters
+        filtered_authors = []
+        for author in authors_data:
+            # Citations filter
+            if citations_min is not None and (author.get("citations") or 0) < citations_min:
+                continue
+            if citations_max is not None and (author.get("citations") or 0) > citations_max:
+                continue
+            
+            # H-index filter
+            if h_index_min is not None and (author.get("h_index") or 0) < h_index_min:
+                continue
+            if h_index_max is not None and (author.get("h_index") or 0) > h_index_max:
+                continue
+            
+            # I10-index filter
+            if i10_index_min is not None and (author.get("i10_index") or 0) < i10_index_min:
+                continue
+            if i10_index_max is not None and (author.get("i10_index") or 0) > i10_index_max:
+                continue
+            
+            filtered_authors.append(author)
+        
+        # Limit final results
+        filtered_authors = filtered_authors[:limit]
+        
+        if not filtered_authors:
+            return {"results": [], "total": 0}
+        
         results: List[Dict[str, Any]] = []
-        for a in candidates:
-            author_id = a.get("id")
-            name = a.get("author_name_en")
-            orcid = a.get("orcid")
+        for author in filtered_authors:
+            author_id = author.get("id")
             if not author_id:
                 continue
             # Author's papers via author_paper
@@ -246,14 +416,37 @@ async def author_search(q: str = Query(..., description="Fuzzy author name")) ->
 
             results.append(
                 {
-                    "author": {"id": author_id, "name": name, "orcid": orcid},
+                    "author": {
+                        "id": author_id,
+                        "name": author.get("author_name_en"),
+                        "name_cn": author.get("author_name_cn"),
+                        "email": author.get("email"),
+                        "orcid": author.get("orcid"),
+                        "citations": author.get("citations") or 0,
+                        "h_index": author.get("h_index") or 0,
+                        "i10_index": author.get("i10_index") or 0,
+                    },
                     "affiliations": affs,
                     "recent_papers": recent,
                     "top_collaborators": top_collaborators,
                 }
             )
 
-        return {"query": q, "results": results}
+        return {
+            "results": results,
+            "total": len(results),
+            "search_criteria": {
+                "author_name": author_name,
+                "email": email,
+                "orcid": orcid,
+                "paper_title": paper_title,
+                "affiliation_name": affiliation_name,
+                "role": role,
+                "citations_range": [citations_min, citations_max] if citations_min is not None or citations_max is not None else None,
+                "h_index_range": [h_index_min, h_index_max] if h_index_min is not None or h_index_max is not None else None,
+                "i10_index_range": [i10_index_min, i10_index_max] if i10_index_min is not None or i10_index_max is not None else None,
+            }
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"author search failed: {e}")
 
