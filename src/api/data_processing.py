@@ -87,7 +87,7 @@ async def fetch_arxiv_today_api(
 
         cats_label = categories if categories else "(env default)"
         logger.info(
-            f"API fetch-arxiv-today: thread_id={config['configurable']['thread_id']}, range={start_date}..{end_date}, "
+            f"[API] fetch-arxiv-today starting: thread_id={config['configurable']['thread_id']}, range={start_date}..{end_date}, "
             f"categories={cats_label}, max_results={config['configurable'].get('max_results', 200)}"
         )
 
@@ -95,7 +95,7 @@ async def fetch_arxiv_today_api(
         result = await graph.ainvoke({}, config=config)
 
         status = result.get("processing_status")
-        logger.info(f"API fetch-arxiv-today done: status={status}, fetched={result.get('fetched', 0)}, inserted={result.get('inserted', 0)}, skipped={result.get('skipped', 0)}")
+        logger.info(f"[API] fetch-arxiv-today completed: status={status}, fetched={result.get('fetched', 0)}, inserted={result.get('inserted', 0)}, skipped={result.get('skipped', 0)}")
         if status == "completed":
             return {
                 "status": "success",
@@ -161,7 +161,7 @@ async def fetch_arxiv_by_id_api(
                 }
             
             id_list = pending_ids
-            logger.info(f"Resuming session {resume_session_id} with {len(id_list)} pending papers")
+            logger.info(f"[SESSION] Resuming session {resume_session_id} with {len(id_list)} pending papers")
         else:
             # 新的处理请求
             id_list: List[str] = [s.strip() for s in (ids or "").split(",") if s.strip()]
@@ -173,7 +173,7 @@ async def fetch_arxiv_by_id_api(
                 source_file="api_upload",
                 paper_ids=id_list
             )
-            logger.info(f"Created new session {session_id} for {len(id_list)} papers")
+            logger.info(f"[SESSION] Created new session {session_id} for {len(id_list)} papers")
 
         graph = request.app.state.data_processing_graph
         actual_thread_id = thread_id or _gen_thread_id("arxiv-by-id")
@@ -189,7 +189,7 @@ async def fetch_arxiv_by_id_api(
         }
 
         preview = ",".join(id_list[:5]) + ("..." if len(id_list) > 5 else "")
-        logger.info(f"API fetch-arxiv-by-id: thread_id={actual_thread_id}, ids_count={len(id_list)}, ids_sample={preview}, session_id={config['configurable']['session_id']}")
+        logger.info(f"[API] fetch-arxiv-by-id starting: thread_id={actual_thread_id}, ids_count={len(id_list)}, ids_sample={preview}, session_id={config['configurable']['session_id']}")
 
         # 初始调用图
         result = await graph.ainvoke({}, config=config)
@@ -197,7 +197,7 @@ async def fetch_arxiv_by_id_api(
         status = result.get("processing_status")
         session_id_used = config['configurable']['session_id']
         
-        logger.info(f"API fetch-arxiv-by-id done: status={status}, fetched={result.get('fetched', 0)}, inserted={result.get('inserted', 0)}, skipped={result.get('skipped', 0)}, session_id={session_id_used}")
+        logger.info(f"[API] fetch-arxiv-by-id completed: status={status}, fetched={result.get('fetched', 0)}, inserted={result.get('inserted', 0)}, skipped={result.get('skipped', 0)}, session_id={session_id_used}")
         
         # 根据处理状态返回不同响应
         if status == "completed":
@@ -212,25 +212,7 @@ async def fetch_arxiv_by_id_api(
                 "failed_papers": len(result.get("failed_paper_ids", [])),
                 "message": "All papers processed successfully"
             }
-        elif status == "batch_completed":
-            # 流式处理中的批次完成状态
-            current_batch = result.get("current_batch_index", 0)
-            total_papers = result.get("total_papers", 0)
-            processed_count = len(result.get("processed_paper_ids", []))
-            failed_count = len(result.get("failed_paper_ids", []))
-            
-            return {
-                "status": "batch_completed",
-                "session_id": session_id_used,
-                "inserted": result.get("inserted", 0),
-                "skipped": result.get("skipped", 0),
-                "current_batch": current_batch,
-                "total_papers": total_papers,
-                "processed_papers": processed_count,
-                "failed_papers": failed_count,
-                "progress_percentage": round((processed_count / total_papers) * 100, 2) if total_papers > 0 else 0,
-                "message": f"Batch {current_batch} completed. Processing continues automatically."
-            }
+        
         elif status == "api_quota_exhausted":
             return {
                 "status": "api_quota_exhausted",
@@ -884,7 +866,7 @@ async def upload_papers_json(request: Request, file: UploadFile = File(...)):
         if not isinstance(batch_size, int) or batch_size < 1 or batch_size > 100:
             batch_size = 10
         
-        logger.info(f"Processing JSON upload: {len(cleaned_ids)} papers, batch_size={batch_size}")
+        logger.info(f"[UPLOAD] Processing JSON upload: {len(cleaned_ids)} papers, batch_size={batch_size}")
         
         # Create batch processing session
         session_id = resume_manager.create_session(
@@ -892,62 +874,50 @@ async def upload_papers_json(request: Request, file: UploadFile = File(...)):
             paper_ids=cleaned_ids
         )
         
-        # Start batch processing
-        async def process_batches():
-            """Batch processing logic: process paper ID list in batches"""
+        # Start single LangGraph processing (internal batching)
+        async def process_papers():
+            """Single LangGraph processing with internal batching"""
             try:
                 graph = request.app.state.data_processing_graph
                 
-                total_papers = len(cleaned_ids)
-                total_batches = (total_papers + batch_size - 1) // batch_size
-                
-                for batch_index in range(total_batches):
-                    # Check session status
-                    session = resume_manager.get_session(session_id)
-                    if not session or session.status == "completed":
-                        break
-                    
-                    # Calculate current batch range
-                    batch_start = batch_index * batch_size
-                    batch_end = min(batch_start + batch_size, total_papers)
-                    current_batch_ids = cleaned_ids[batch_start:batch_end]
-                    
-                    logger.info(f"Processing batch {batch_index + 1}/{total_batches}: papers {batch_start + 1}-{batch_end}")
-                    
-                    # Build config
-                    config = {
-                        "configurable": {
-                            "thread_id": f"{session_id}_batch_{batch_index}",
-                            "id_list": current_batch_ids,
-                            "session_id": session_id,
-                            "resume_mode": False
-                        }
+                # Build config for single processing call
+                config = {
+                    "configurable": {
+                        "thread_id": session_id,
+                        "id_list": cleaned_ids,
+                        "session_id": session_id,
+                        "resume_mode": False,
+                        "source_file": file.filename
                     }
-                    
-                    # Execute batch processing
-                    try:
-                        result = await graph.ainvoke({}, config=config)
-                        
-                        # Check processing result
-                        if result.get("processing_status") == "api_quota_exhausted":
-                            logger.warning(f"API quota exhausted at batch {batch_index + 1}")
-                            break
-                        elif result.get("processing_status") == "error":
-                            error_msg = result.get("error_message", "Unknown error")
-                            logger.error(f"Error in batch {batch_index + 1}: {error_msg}")
-                            break
-                        
-                    except Exception as e:
-                        logger.error(f"Error processing batch {batch_index + 1}: {str(e)}")
-                        break
+                }
                 
-                logger.info(f"Batch processing completed for session {session_id}")
+                logger.info(f"[PROCESSING] Starting LangGraph processing for {len(cleaned_ids)} papers")
+                
+                # Execute single processing call (LangGraph handles internal batching)
+                result = await graph.ainvoke({}, config=config)
+                
+                # Log completion with results
+                inserted = result.get("inserted", 0)
+                skipped = result.get("skipped", 0)
+                fetched = result.get("fetched", 0)
+                successful_batches = result.get("successful_batches", 0)
+                total_batches = result.get("total_batches", 0)
+                
+                logger.info(f"[PROCESSING] ✅ Completed: {fetched} fetched, {inserted} inserted, {skipped} skipped")
+                logger.info(f"[PROCESSING] Batch summary: {successful_batches}/{total_batches} batches successful")
+                
+                # Update session status
+                if result.get("processing_status") == "completed":
+                    resume_manager.update_session_status(session_id, "completed")
+                elif result.get("processing_status") == "error":
+                    resume_manager.update_session_status(session_id, "error")
                 
             except Exception as e:
-                logger.error(f"Fatal error in batch processing for session {session_id}: {str(e)}")
+                logger.error(f"Fatal error in processing for session {session_id}: {str(e)}")
+                resume_manager.update_session_status(session_id, "error")
         
         # Start background task
-        asyncio.create_task(process_batches())
+        asyncio.create_task(process_papers())
         
         return {
             "status": "success",

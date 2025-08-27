@@ -51,7 +51,8 @@ _AFF_SEM = asyncio.Semaphore(_AFF_MAX)
 _ORCID_MAX = int(os.getenv("ORCID_MAX_CONCURRENCY", "5"))
 _ORCID_SEM = asyncio.Semaphore(_ORCID_MAX)
 
-# Tavily API batch processing delay configuration
+# Tavily API configuration
+_TAVILY_ENABLED = os.getenv("TAVILY_ENABLED", "false").lower() in ("true", "1", "yes", "on")
 _TAVILY_BATCH_DELAY = float(os.getenv("TAVILY_BATCH_DELAY", "2.0"))
 
 # Database batch processing concurrency control
@@ -111,22 +112,58 @@ async def fetch_arxiv_today(state: DataProcessingState, config: RunnableConfig) 
             )
             logger.info(f"Created new processing session: {session_id}")
 
-        # ID列表模式：直接获取所有论文
+        # ID列表模式：分批获取论文以优化内存使用和错误处理
         if id_list:
-            raw = await asyncio.to_thread(search_papers_by_ids, id_list)
-            logger.info(f"arXiv fetch by IDs: fetched {len(raw)} papers")
+            batch_size = int(os.getenv("BATCH_SIZE", "10"))
+            total_papers = len(id_list)
+            total_batches = (total_papers + batch_size - 1) // batch_size
+            
+            logger.info(f"Processing {total_papers} papers in {total_batches} batches (batch_size={batch_size})")
+            
+            all_raw_papers = []
+            successful_batches = 0
+            
+            for batch_index in range(total_batches):
+                batch_start = batch_index * batch_size
+                batch_end = min(batch_start + batch_size, total_papers)
+                current_batch_ids = id_list[batch_start:batch_end]
+                
+                logger.info(f"[BATCH {batch_index + 1}/{total_batches}] Processing papers {batch_start + 1}-{batch_end} ({len(current_batch_ids)} papers)")
+                
+                try:
+                    # 分批调用ArXiv API
+                    batch_raw = await asyncio.to_thread(search_papers_by_ids, current_batch_ids)
+                    all_raw_papers.extend(batch_raw)
+                    successful_batches += 1
+                    
+                    logger.info(f"[BATCH {batch_index + 1}/{total_batches}] ✅ Fetched {len(batch_raw)} papers from ArXiv")
+                    
+                    # 可选：添加批次间延迟以避免API限制
+                    if batch_index < total_batches - 1:  # 不是最后一批
+                        await asyncio.sleep(0.5)  # 500ms延迟
+                        
+                except Exception as e:
+                    logger.error(f"[BATCH {batch_index + 1}/{total_batches}] ❌ Failed to fetch papers: {str(e)}")
+                    # 继续处理下一批，不中断整个流程
+                    continue
+            
+            logger.info(f"ArXiv fetch completed: {len(all_raw_papers)} papers fetched from {successful_batches}/{total_batches} successful batches")
             
             return {
                 "processing_status": "fetched",
-                "raw_papers": raw,
-                "fetched": len(raw),
+                "raw_papers": all_raw_papers,
+                "fetched": len(all_raw_papers),
                 "papers": [],
                 "categories": categories,
                 "session_id": session_id,
                 "resume_mode": resume_mode,
                 "processed_paper_ids": state.get("processed_paper_ids", []),
                 "failed_paper_ids": state.get("failed_paper_ids", []),
-                "api_exhausted": False
+                "api_exhausted": False,
+                "total_requested": total_papers,
+                "total_papers": len(all_raw_papers),
+                "successful_batches": successful_batches,
+                "total_batches": total_batches
             }
         else:
             # 非ID列表模式：按日期范围或窗口获取
@@ -238,9 +275,9 @@ async def process_single_paper(state: Dict[str, Any]) -> Dict[str, Any]:
                             name
                         )
                         if academic_metrics:
-                            logger.info(f"Retrieved academic metrics for {name}: {academic_metrics}")
+                            logger.info(f"[OPENALEX] ✓ Retrieved metrics for {name}: citations={academic_metrics.get('citations', 'N/A')}, h-index={academic_metrics.get('h_index', 'N/A')}")
                     except Exception as e:
-                        logger.warning(f"Failed to get academic metrics for {name}: {e}")
+                        logger.warning(f"[OPENALEX] ✗ Failed to get metrics for {name}: {e}")
                     
                     author_entry = {"name": name, "affiliations": aff, "email": email}
                     if academic_metrics:
@@ -287,11 +324,11 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
     paper_id = paper.get("id", "unknown")
     paper_title = paper.get("title", "Unknown")
     session_id = state.get("session_id")
-    logger.info(f"Processing ORCID for paper: '{paper_title[:50]}...'")
+    # Reduce verbose per-paper ORCID logs; keep processing minimal
     
     authors = paper.get("authors", []) or []
     aff_map = paper.get("author_affiliations", []) or []
-    logger.info(f"Authors count: {len(authors)}, Author affiliations count: {len(aff_map)}")
+    # Skip detailed ORCID author/affiliation count logs to keep console clean
     
     if not authors or not aff_map:
         logger.info("No authors or affiliations found, skipping ORCID processing")
@@ -442,11 +479,11 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
                     ed = parse_orcid_date(best_aff.get("end_date") or "")
         
         # If no role found (either ORCID not found or ORCID found but no role), try Tavily API
-        if not role:
+        if not role and _TAVILY_ENABLED:
             # Use aff_used if available from ORCID, otherwise use the first affiliation from the paper
             search_aff = aff_used or (affs[0] if affs else None)
             if search_aff:
-                logger.info(f"Trying Tavily API for {name} at {search_aff} (ORCID found: {orcid_found})")
+                # Keep Tavily logs minimal; avoid noisy info
                 try:
                     # Add throttling delay between Tavily API calls in batch processing
                     if i > 0:  # Skip delay for first author in batch
@@ -457,19 +494,18 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
                         extracted_role = tavily_result.get("extracted_role")
                         if extracted_role:
                             role = extracted_role.strip()
-                            logger.info(f"Tavily found role for {name}: {role}")
                             # If we didn't have aff_used from ORCID, use the search affiliation
                             if not aff_used:
                                 aff_used = search_aff
                         else:
-                            logger.info(f"Tavily search successful but no role extracted for {name}")
+                            logger.debug(f"[TAVILY] Search successful but no role extracted for {name}")
                     else:
-                        logger.info(f"Tavily search failed for {name}")
+                        logger.debug(f"[TAVILY] Search failed for {name}")
                 except Exception as e:
                     error_msg = str(e).lower()
                     # 检测Tavily API额度耗尽
                     if "quota" in error_msg or "limit" in error_msg or "exceeded" in error_msg:
-                        logger.error(f"Tavily API quota exhausted while processing {name}: {e}")
+                        logger.error(f"[TAVILY] ⚠ API quota exhausted while processing {name}: {e}")
                         api_exhausted = True
                         
                         # 更新会话状态
@@ -487,75 +523,92 @@ async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
                             "error_message": f"Tavily API quota exhausted while processing author {name}"
                         }
                     else:
-                        logger.error(f"Tavily API error for {name}: {e}")
+                        logger.error(f"[TAVILY] ✗ API error for {name}: {e}")
             else:
-                logger.info(f"No affiliation available for Tavily search for {name}")
+                logger.debug(f"[TAVILY] No affiliation available for search for {name}")
+        elif not role and not _TAVILY_ENABLED:
+            # Silence frequent skip logs when Tavily disabled
+            pass
         
         # 如果API已耗尽，停止处理
         if api_exhausted:
             break
         
-        # Note: role, department, start_date, end_date information is no longer stored
-        # as orcid_aff_meta field has been removed from the database schema
+        # Store role information in author_affiliations for database persistence
+        if role and name in [item.get("name") for item in aff_map]:
+            # Find the corresponding author in author_affiliations and add role
+            for item in aff_map:
+                if item.get("name") == name:
+                    item["role"] = role
+                    break
+    
     enriched = {**paper}
     if orcid_by_author:
         enriched["orcid_by_author"] = orcid_by_author
     return {"papers": [enriched], "api_exhausted": api_exhausted}
 
 def merge_paper_results(state: DataProcessingState) -> DataProcessingState:
-    """Merge results from process_single_paper and process_orcid_for_paper.
+    """Merge and deduplicate results from parallel ORCID processing.
     
-    This function combines the enriched paper data from both processing nodes
-    to avoid duplicate processing in upsert_papers.
+    This function acts as a reducer that collects all parallel Send results
+    from process_orcid_for_paper nodes and handles deduplication.
     """
-    logger.info(f"merge_paper_results called with {len(state.get('papers', []))} papers")
     papers = state.get("papers", []) or []
     api_exhausted = state.get("api_exhausted", False)
     
-    # 检查是否有任何论文处理过程中API耗尽
+    # Keep merge log minimal
+    
+    # 检查API耗尽状态
     for paper_result in papers:
         if isinstance(paper_result, dict) and paper_result.get("api_exhausted"):
             api_exhausted = True
+            logger.warning(f"[MERGE] API quota exhausted detected in paper processing")
             break
     
-    if not papers:
-        logger.info("No papers to merge, returning state as-is")
-        result = state.copy()
-        if api_exhausted:
-            result["api_exhausted"] = True
-            result["processing_status"] = "api_quota_exhausted"
-        return result
-    
-    # Group papers by arxiv_entry to merge duplicates
+    # 去重处理：基于arxiv_entry或id合并重复论文
     paper_map = {}
+    duplicates_merged = 0
+    skipped_invalid = 0
+    
     for paper in papers:
-        arxiv_entry = paper.get("id")
-        if not arxiv_entry:
+        # 尝试多种ID字段作为去重键
+        paper_key = paper.get("arxiv_entry") or paper.get("id") or paper.get("arxiv_id")
+        
+        if not paper_key:
+            skipped_invalid += 1
+            logger.debug(f"[MERGE] Paper missing identification fields, skipping: {paper.get('title', 'Unknown')[:50]}...")
             continue
-            
-        if arxiv_entry in paper_map:
-            logger.info(f"Merging duplicate paper: {arxiv_entry}")
-            # Merge the paper data
-            existing = paper_map[arxiv_entry]
-            # Merge author_affiliations (from process_single_paper)
-            if "author_affiliations" in paper and "author_affiliations" not in existing:
-                existing["author_affiliations"] = paper["author_affiliations"]
-            # Merge orcid data (from process_orcid_for_paper)
+        
+        if paper_key in paper_map:
+            duplicates_merged += 1
+            logger.debug(f"[MERGE] Merging duplicate paper: {paper_key}")
+            existing = paper_map[paper_key]
+            # Merge ORCID data from parallel processing
             if "orcid_by_author" in paper:
-                existing["orcid_by_author"] = paper["orcid_by_author"]
+                if "orcid_by_author" not in existing:
+                    existing["orcid_by_author"] = {}
+                existing["orcid_by_author"].update(paper["orcid_by_author"])
+            # Merge other enriched data
+            if "academic_metrics" in paper and "academic_metrics" not in existing:
+                existing["academic_metrics"] = paper["academic_metrics"]
         else:
-            paper_map[arxiv_entry] = paper.copy()
+            paper_map[paper_key] = paper
     
-    # Return merged papers
     merged_papers = list(paper_map.values())
-    logger.info(f"Merged {len(papers)} papers into {len(merged_papers)} unique papers, API exhausted: {api_exhausted}")
     
-    result = {**state, "papers": merged_papers}
-    if api_exhausted:
-        result["api_exhausted"] = True
-        result["processing_status"] = "api_quota_exhausted"
+    # 简化日志输出，只在有重要信息时输出
+    if duplicates_merged > 0:
+        logger.info(f"[MERGE] Merged duplicates: {duplicates_merged}, invalid skipped: {skipped_invalid}")
+    elif skipped_invalid > 0:
+        logger.debug(f"[MERGE] Skipped {skipped_invalid} papers with missing ID fields")
     
-    return result
+    logger.info(f"[MERGE] {len(merged_papers)} unique papers ready for DB insertion")
+    
+    return {
+        "papers": merged_papers,
+        "api_exhausted": api_exhausted,
+        "processing_status": "api_quota_exhausted" if api_exhausted else "completed"
+    }
 
 def dispatch_affiliations(state: DataProcessingState):
     """Dispatch parallel jobs using Send for each paper in `raw_papers`."""
@@ -608,15 +661,14 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
             return {"processing_status": "error", "error_message": "DATABASE_URL not set"}
         
         await DatabaseManager.initialize(db_uri)
-        pool = await DatabaseManager.get_pool()
 
-        logger.info(f"Processing {len(papers_to_process)} papers")
+        logger.info(f"[UPSERT] Processing {len(papers_to_process)} papers for database insertion")
         
         try:
             # 使用信号量限制并发批次数量，避免过多数据库连接
             async with _BATCH_SEM:
-                inserted, skipped = await _process_paper_batch(
-                    papers_to_process, pool
+                inserted, skipped = await _process_paper_batch_with_context(
+                    papers_to_process
                 )
             
             logger.info(f"Processing completed: {inserted} inserted, {skipped} skipped")
@@ -643,15 +695,14 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
             "error_message": str(e)
         }
 
-async def _process_paper_batch(
-    papers_batch: List[Dict[str, Any]], 
-    pool
+async def _process_paper_batch_with_context(
+    papers_batch: List[Dict[str, Any]]
 ) -> tuple[int, int]:
-    """处理单个论文批次的核心逻辑"""
+    """处理单个论文批次的核心逻辑 - 使用连接上下文管理器"""
     inserted = 0
     skipped = 0
     
-    async with pool.connection() as conn:
+    async with DatabaseManager.get_connection() as conn:
         async with conn.cursor() as cur:
             await create_schema_if_not_exists(cur)
             # Prepare QS mapping and ranking systems once per transaction
@@ -898,6 +949,10 @@ async def _process_paper_batch(
                         author_id = author_name_to_id.get(name)
                         if not author_id:
                             continue
+                        
+                        # Get role information for this author
+                        author_role = item.get("role")
+                        
                         for aff_name in item.get("affiliations") or []:
                             if not aff_name:
                                 continue
@@ -933,19 +988,30 @@ async def _process_paper_batch(
 
                             # Enrich with QS rankings and country if available
                             await enrich_affiliation_from_qs(cur, aff_id, cleaned, qs_map, qs_names, qs_sys_ids)
-                            # Upsert author_affiliation: only maintain latest_time; preserve existing role/start_date/end_date from ORCID enrichment
+                            
+                            # Upsert author_affiliation: include role information from Tavily/ORCID search
                             pub_dt = published_date
-                            await cur.execute(
-                                """
-                                INSERT INTO author_affiliation (author_id, affiliation_id, latest_time)
-                                VALUES (%s, %s, %s)
-                                ON CONFLICT (author_id, affiliation_id) DO UPDATE SET
-                                  latest_time = GREATEST(COALESCE(author_affiliation.latest_time, EXCLUDED.latest_time), EXCLUDED.latest_time)
-                                """,
-                                (author_id, aff_id, pub_dt),
-                            )
-                            # Note: ORCID metadata (role, department, start_date, end_date) is no longer processed
-                            # as orcid_aff_meta field has been removed from the database schema
+                            if author_role:
+                                await cur.execute(
+                                    """
+                                    INSERT INTO author_affiliation (author_id, affiliation_id, latest_time, role)
+                                    VALUES (%s, %s, %s, %s)
+                                    ON CONFLICT (author_id, affiliation_id) DO UPDATE SET
+                                      latest_time = GREATEST(COALESCE(author_affiliation.latest_time, EXCLUDED.latest_time), EXCLUDED.latest_time),
+                                      role = COALESCE(EXCLUDED.role, author_affiliation.role)
+                                    """,
+                                    (author_id, aff_id, pub_dt, author_role),
+                                )
+                            else:
+                                await cur.execute(
+                                    """
+                                    INSERT INTO author_affiliation (author_id, affiliation_id, latest_time)
+                                    VALUES (%s, %s, %s)
+                                    ON CONFLICT (author_id, affiliation_id) DO UPDATE SET
+                                      latest_time = GREATEST(COALESCE(author_affiliation.latest_time, EXCLUDED.latest_time), EXCLUDED.latest_time)
+                                    """,
+                                    (author_id, aff_id, pub_dt),
+                                )
 
             # Commit the transaction for this batch
             await conn.commit()
@@ -963,9 +1029,13 @@ def _route(state: DataProcessingState) -> str:
         return "__end__"
 
 def collect_single_paper_results(state: DataProcessingState) -> DataProcessingState:
-    """Collect results from process_single_paper and prepare for ORCID processing."""
+    """Collect results from process_single_paper and prepare for ORCID processing.
+    
+    This function acts as a reducer node that automatically collects all parallel
+    Send results from process_single_paper nodes via the papers field reducer.
+    """
     papers = state.get("papers", []) or []
-    logger.info(f"Collected {len(papers)} papers from process_single_paper")
+    logger.info(f"[COLLECT] Collected {len(papers)} papers with author_affiliations for ORCID processing")
     return state
 
 

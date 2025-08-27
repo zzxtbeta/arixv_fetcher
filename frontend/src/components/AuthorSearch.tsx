@@ -1,4 +1,4 @@
-import { Card, Input, List, Tag, Typography, Space, message, Button } from 'antd'
+import { Card, Input, List, Tag, Typography, Space, message, Button, Dropdown, MenuProps } from 'antd'
 import { useState } from 'react'
 import { searchAuthor } from '../api'
 import { ArrowUpOutlined, ArrowDownOutlined, DownloadOutlined } from '@ant-design/icons'
@@ -41,30 +41,55 @@ export default function AuthorSearch() {
     }
   }
 
-  async function handleExportAuthors() {
+  async function handleExportAuthors(format: 'json' | 'csv') {
     try {
-      message.loading('正在导出数据...', 0)
-      const response = await fetch('/dashboard/export-authors')
-      const data = await response.json()
+      message.loading(`正在导出${format.toUpperCase()}数据...`, 0)
       
-      if (response.ok && data.success) {
-        // Create and download JSON file
-        const jsonString = JSON.stringify(data.data, null, 2)
-        const blob = new Blob([jsonString], { type: 'application/json' })
-        const url = URL.createObjectURL(blob)
+      if (format === 'csv') {
+        // Handle CSV export with direct download
+        const response = await fetch(`/dashboard/export-authors?format=csv`)
         
-        const link = document.createElement('a')
-        link.href = url
-        link.download = `authors_export_${new Date().toISOString().split('T')[0]}.json`
-        document.body.appendChild(link)
-        link.click()
-        document.body.removeChild(link)
-        URL.revokeObjectURL(url)
-        
-        message.destroy()
-        message.success(`成功导出 ${data.total_count} 条作者数据`)
+        if (response.ok) {
+          const blob = await response.blob()
+          const url = URL.createObjectURL(blob)
+          
+          const link = document.createElement('a')
+          link.href = url
+          link.download = `authors_export_${new Date().toISOString().split('T')[0]}.csv`
+          document.body.appendChild(link)
+          link.click()
+          document.body.removeChild(link)
+          URL.revokeObjectURL(url)
+          
+          message.destroy()
+          message.success('成功导出CSV格式作者数据')
+        } else {
+          throw new Error('CSV导出失败')
+        }
       } else {
-        throw new Error(data.detail || '导出失败')
+        // Handle JSON export
+        const response = await fetch('/dashboard/export-authors?format=json')
+        const data = await response.json()
+        
+        if (response.ok && data.success) {
+          // Create and download JSON file
+          const jsonString = JSON.stringify(data.data, null, 2)
+          const blob = new Blob([jsonString], { type: 'application/json' })
+          const url = URL.createObjectURL(blob)
+          
+          const link = document.createElement('a')
+          link.href = url
+          link.download = `authors_export_${new Date().toISOString().split('T')[0]}.json`
+          document.body.appendChild(link)
+          link.click()
+          document.body.removeChild(link)
+          URL.revokeObjectURL(url)
+          
+          message.destroy()
+          message.success(`成功导出 ${data.total_count} 条作者数据`)
+        } else {
+          throw new Error(data.detail || 'JSON导出失败')
+        }
       }
     } catch (error: any) {
       console.error('Export error:', error)
@@ -77,13 +102,27 @@ export default function AuthorSearch() {
     <Card title="Author Search" extra={<Typography.Text type="secondary">Case-insensitive fuzzy</Typography.Text>}>
       <Space direction="vertical" style={{ width: '100%' }} size="large">
         <Space style={{ width: '100%', justifyContent: 'flex-start' }}>
-          <Button 
-            type="primary" 
-            icon={<DownloadOutlined />} 
-            onClick={handleExportAuthors}
+          <Dropdown
+            menu={{
+              items: [
+                {
+                  key: 'json',
+                  label: '导出为JSON格式',
+                  onClick: () => handleExportAuthors('json')
+                },
+                {
+                  key: 'csv',
+                  label: '导出为CSV格式',
+                  onClick: () => handleExportAuthors('csv')
+                }
+              ] as MenuProps['items']
+            }}
+            placement="bottomLeft"
           >
-            导出作者数据为JSON
-          </Button>
+            <Button type="primary" icon={<DownloadOutlined />}>
+              导出作者数据
+            </Button>
+          </Dropdown>
         </Space>
         <Input.Search placeholder="Type an author name..." enterButton loading={loading} onSearch={onSearch} />
         <List

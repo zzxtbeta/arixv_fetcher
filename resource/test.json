@@ -1,0 +1,18 @@
+[
+  {
+    "id": "2504.12526v1",
+    "title": "MOM: Memory-Efficient Offloaded Mini-Sequence Inference for Long Context   Language Models"
+  },
+  {
+    "id": "2504.14775v2",
+    "title": "gLLM: Global Balanced Pipeline Parallelism System for Distributed LLM   Serving with Token Throttling"
+  },
+  {
+    "id": "2508.00904v1",
+    "title": "Forecasting LLM Inference Performance via Hardware-Agnostic Analytical   Modeling"
+  },
+  {
+    "id": "2308.16369v1",
+    "title": "SARATHI: Efficient LLM Inference by Piggybacking Decodes with Chunked   Prefills"
+  }
+]

@@ -1,0 +1,2946 @@
+[
+  {
+    "id": "2504.12526v1",
+    "title": "MOM: Memory-Efficient Offloaded Mini-Sequence Inference for Long Context   Language Models"
+  },
+  {
+    "id": "2504.14775v2",
+    "title": "gLLM: Global Balanced Pipeline Parallelism System for Distributed LLM   Serving with Token Throttling"
+  },
+  {
+    "id": "2508.00904v1",
+    "title": "Forecasting LLM Inference Performance via Hardware-Agnostic Analytical   Modeling"
+  },
+  {
+    "id": "2308.16369v1",
+    "title": "SARATHI: Efficient LLM Inference by Piggybacking Decodes with Chunked   Prefills"
+  },
+  {
+    "id": "2410.01805v2",
+    "title": "Locret: Enhancing Eviction in Long-Context LLM Inference with Trained   Retaining Heads on Consumer-Grade Devices"
+  },
+  {
+    "id": "2505.20334v1",
+    "title": "Lookahead Q-Cache: Achieving More Consistent KV Cache Eviction via   Pseudo Query"
+  },
+  {
+    "id": "2403.02310v3",
+    "title": "Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve"
+  },
+  {
+    "id": "2505.23416v1",
+    "title": "KVzip: Query-Agnostic KV Cache Compression with Context Reconstruction"
+  },
+  {
+    "id": "2501.06807v1",
+    "title": "MPCache: MPC-Friendly KV Cache Eviction for Efficient Private Large   Language Model Inference"
+  },
+  {
+    "id": "2503.08461v1",
+    "title": "FastCache: Optimizing Multimodal LLM Serving through Lightweight   KV-Cache Compression Framework"
+  },
+  {
+    "id": "2504.09285v2",
+    "title": "DynaServe: Unified and Elastic Execution for Dynamic Disaggregated LLM   Serving"
+  },
+  {
+    "id": "2506.15724v1",
+    "title": "MadaKV: Adaptive Modality-Perception KV Cache Eviction for Efficient   Multimodal Long-Context Inference"
+  },
+  {
+    "id": "2504.15364v3",
+    "title": "KeyDiff: Key Similarity-Based KV Cache Eviction for Long-Context LLM   Inference in Resource-Constrained Environments"
+  },
+  {
+    "id": "2405.14256v1",
+    "title": "ZipCache: Accurate and Efficient KV Cache Quantization with Salient   Token Identification"
+  },
+  {
+    "id": "2502.10424v1",
+    "title": "QuantSpec: Self-Speculative Decoding with Hierarchical Quantized KV   Cache"
+  },
+  {
+    "id": "2410.03960v3",
+    "title": "SwiftKV: Fast Prefill-Optimized Inference with Knowledge-Preserving   Model Transformation"
+  },
+  {
+    "id": "2507.06608v5",
+    "title": "Nexus:Proactive Intra-GPU Disaggregation of Prefill and Decode in LLM   Serving"
+  },
+  {
+    "id": "2404.09526v2",
+    "title": "LoongServe: Efficiently Serving Long-Context Large Language Models with   Elastic Sequence Parallelism"
+  },
+  {
+    "id": "2506.11498v1",
+    "title": "Lag-Relative Sparse Attention In Long Context Training"
+  },
+  {
+    "id": "2503.16163v1",
+    "title": "SpeCache: Speculative Key-Value Caching for Efficient Generation of LLMs"
+  },
+  {
+    "id": "2504.08784v1",
+    "title": "SLOs-Serve: Optimized Serving of Multi-SLO LLMs"
+  },
+  {
+    "id": "2411.18077v3",
+    "title": "MiniKV: Pushing the Limits of LLM Inference via 2-Bit   Layer-Discriminative KV Cache"
+  },
+  {
+    "id": "2404.11912v3",
+    "title": "TriForce: Lossless Acceleration of Long Sequence Generation with   Hierarchical Speculative Decoding"
+  },
+  {
+    "id": "2508.02751v1",
+    "title": "SmallKV: Small Model Assisted Compensation of KV Cache Compression for   Efficient LLM Inference"
+  },
+  {
+    "id": "2504.03775v1",
+    "title": "FlowKV: A Disaggregated Inference Framework with Low-Latency KV Cache   Transfer and Load-Aware Scheduling"
+  },
+  {
+    "id": "2406.13035v3",
+    "title": "D2O: Dynamic Discriminative Operations for Efficient Long-Context   Inference of Large Language Models"
+  },
+  {
+    "id": "2502.14051v3",
+    "title": "RocketKV: Accelerating Long-Context LLM Inference via Two-Stage KV Cache   Compression"
+  },
+  {
+    "id": "2507.17769v1",
+    "title": "PolyServe: Efficient Multi-SLO Serving at Scale"
+  },
+  {
+    "id": "2503.16525v2",
+    "title": "KVShare: An LLM Service System with Efficient and Effective Multi-Tenant   KV Cache Reuse"
+  },
+  {
+    "id": "2410.23317v1",
+    "title": "VL-Cache: Sparsity and Modality-Aware KV Cache Compression for   Vision-Language Model Inference Acceleration"
+  },
+  {
+    "id": "2505.20776v1",
+    "title": "SpecExtend: A Drop-in Enhancement for Speculative Decoding of Long   Sequences"
+  },
+  {
+    "id": "2408.11049v5",
+    "title": "MagicDec: Breaking the Latency-Throughput Tradeoff for Long Context   Generation with Speculative Decoding"
+  },
+  {
+    "id": "2502.01068v2",
+    "title": "FastKV: KV Cache Compression for Fast Long-Context Processing with   Token-Selective Propagation"
+  },
+  {
+    "id": "2503.08879v1",
+    "title": "LLMs Know What to Drop: Self-Attention Guided KV Cache Eviction for   Efficient Long-Context Inference"
+  },
+  {
+    "id": "2410.03065v2",
+    "title": "Compute Or Load KV Cache? Why Not Both?"
+  },
+  {
+    "id": "2505.21487v1",
+    "title": "Hardware-Efficient Attention for Fast Decoding"
+  },
+  {
+    "id": "2410.03090v1",
+    "title": "UNComp: Uncertainty-Aware Long-Context Compressor for Efficient Large   Language Model Inference"
+  },
+  {
+    "id": "2404.09529v1",
+    "title": "Prepacking: A Simple Method for Fast Prefilling and Increased Throughput   in Large Language Models"
+  },
+  {
+    "id": "2412.03213v2",
+    "title": "ClusterKV: Manipulating LLM KV Cache in Semantic Space for Recallable   Compression"
+  },
+  {
+    "id": "2412.13649v3",
+    "title": "SCOPE: Optimizing Key-Value Cache Compression in Long-context Generation"
+  },
+  {
+    "id": "2503.12491v1",
+    "title": "CAKE: Cascading and Adaptive KV Cache Eviction with Layer Preferences"
+  },
+  {
+    "id": "2408.14906v1",
+    "title": "Writing in the Margins: Better Inference Pattern for Long Context   Retrieval"
+  },
+  {
+    "id": "2407.15309v1",
+    "title": "vTensor: Flexible Virtual Tensor Management for Efficient LLM Serving"
+  },
+  {
+    "id": "2507.00797v1",
+    "title": "VEDA: Efficient LLM Generation Through Voting-based KV Cache Eviction   and Dataflow-flexible Accelerator"
+  },
+  {
+    "id": "2410.00161v2",
+    "title": "KV-Compress: Paged KV-Cache Compression with Variable Compression Rates   per Attention Head"
+  },
+  {
+    "id": "2503.11108v2",
+    "title": "Time and Memory Trade-off of KV-Cache Compression in Tensor Transformer   Decoding"
+  },
+  {
+    "id": "2504.11765v1",
+    "title": "Shared Disk KV Cache Management for Efficient Multi-Instance Inference   in RAG-Powered LLMs"
+  },
+  {
+    "id": "2407.11550v4",
+    "title": "Ada-KV: Optimizing KV Cache Eviction by Adaptive Budget Allocation for   Efficient LLM Inference"
+  },
+  {
+    "id": "2502.07903v1",
+    "title": "HexGen-2: Disaggregated Generative Inference of LLMs in Heterogeneous   Environment"
+  },
+  {
+    "id": "2410.18517v1",
+    "title": "KVSharer: Efficient Inference via Layer-Wise Dissimilar KV Cache Sharing"
+  },
+  {
+    "id": "2503.01586v1",
+    "title": "EliteKV: Scalable KV Cache Compression via RoPE Frequency Selection and   Joint Low-Rank Projection"
+  },
+  {
+    "id": "2411.17089v2",
+    "title": "KVPR: Efficient LLM Inference with I/O-Aware KV Cache Partial   Recomputation"
+  },
+  {
+    "id": "2405.08944v1",
+    "title": "Challenges in Deploying Long-Context Transformers: A Theoretical Peak   Performance Analysis"
+  },
+  {
+    "id": "2407.08454v2",
+    "title": "Model Tells You Where to Merge: Adaptive KV Cache Merging for LLMs on   Long-Context Tasks"
+  },
+  {
+    "id": "2410.08584v2",
+    "title": "ZipVL: Efficient Large Vision-Language Models with Dynamic Token   Sparsification"
+  },
+  {
+    "id": "2507.11507v1",
+    "title": "MIRAGE: KV Cache Optimization through Parameter Remapping for   Multi-tenant LLM Serving"
+  },
+  {
+    "id": "2507.18454v1",
+    "title": "Sandwich: Separating Prefill-Decode Compilation for Efficient CPU LLM   Serving"
+  },
+  {
+    "id": "2501.14743v1",
+    "title": "KVDirect: Distributed Disaggregated LLM Inference"
+  },
+  {
+    "id": "2503.10714v2",
+    "title": "ZSMerge: Zero-Shot KV Cache Compression for Memory-Efficient   Long-Context LLMs"
+  },
+  {
+    "id": "2506.04642v1",
+    "title": "TaDA: Training-free recipe for Decoding with Adaptive KV Cache   Compression and Mean-centering"
+  },
+  {
+    "id": "2505.07680v1",
+    "title": "SpecRouter: Adaptive Routing for Multi-Level Speculative Decoding in   Large Language Models"
+  },
+  {
+    "id": "2504.02921v1",
+    "title": "HyperRAG: Enhancing Quality-Efficiency Tradeoffs in Retrieval-Augmented   Generation with Reranker KV-Cache Reuse"
+  },
+  {
+    "id": "2403.19708v3",
+    "title": "Cost-Efficient Large Language Model Serving for Multi-turn Conversations   with CachedAttention"
+  },
+  {
+    "id": "2306.14048v3",
+    "title": "H$_2$O: Heavy-Hitter Oracle for Efficient Generative Inference of Large   Language Models"
+  },
+  {
+    "id": "2403.05527v4",
+    "title": "GEAR: An Efficient KV Cache Compression Recipe for Near-Lossless   Generative Inference of LLM"
+  },
+  {
+    "id": "2506.11309v1",
+    "title": "SwiftSpec: Ultra-Low Latency LLM Decoding by Scaling Asynchronous   Speculative Decoding"
+  },
+  {
+    "id": "2503.23956v3",
+    "title": "AirCache: Activating Inter-modal Relevancy KV Cache Compression for   Efficient Large Vision-Language Model Inference"
+  },
+  {
+    "id": "2405.03917v1",
+    "title": "KV Cache is 1 Bit Per Channel: Efficient Large Language Model Inference   with Coupled Quantization"
+  },
+  {
+    "id": "2502.02493v1",
+    "title": "EasySpec: Layer-Parallel Speculative Decoding for Efficient Multi-GPU   Utilization"
+  },
+  {
+    "id": "2412.05693v3",
+    "title": "Batch-Max: Higher LLM Throughput using Larger Batch Sizes and KV Cache   Compression"
+  },
+  {
+    "id": "2504.06419v1",
+    "title": "SPIRe: Boosting LLM Inference Throughput with Speculative Decoding"
+  },
+  {
+    "id": "2402.02057v1",
+    "title": "Break the Sequential Dependency of LLM Inference Using Lookahead   Decoding"
+  },
+  {
+    "id": "2411.02820v4",
+    "title": "DroidSpeak: KV Cache Sharing for Cross-LLM Communication and Multi-LLM   Serving"
+  },
+  {
+    "id": "2508.08438v1",
+    "title": "Selective KV-Cache Sharing to Mitigate Timing Side-Channels in LLM   Inference"
+  },
+  {
+    "id": "2405.14366v2",
+    "title": "MiniCache: KV Cache Compression in Depth Dimension for Large Language   Models"
+  },
+  {
+    "id": "2409.17264v4",
+    "title": "Medha: Efficiently Serving Multi-Million Context Length LLM Inference   Requests Without Approximations"
+  },
+  {
+    "id": "2408.03675v2",
+    "title": "NACL: A General and Effective KV Cache Eviction Framework for LLMs at   Inference Time"
+  },
+  {
+    "id": "2504.00970v1",
+    "title": "SentenceKV: Efficient LLM Inference via Sentence-Level Semantic KV   Caching"
+  },
+  {
+    "id": "2406.18139v1",
+    "title": "LOOK-M: Look-Once Optimization in KV Cache for Efficient Multimodal   Long-Context Inference"
+  },
+  {
+    "id": "2405.05254v2",
+    "title": "You Only Cache Once: Decoder-Decoder Architectures for Language Models"
+  },
+  {
+    "id": "2402.18096v1",
+    "title": "No Token Left Behind: Reliable KV Cache Compression via Importance-Aware   Mixed Precision Quantization"
+  },
+  {
+    "id": "2505.20438v1",
+    "title": "HAMburger: Accelerating LLM Inference via Token Smashing"
+  },
+  {
+    "id": "2502.13176v2",
+    "title": "BaKlaVa -- Budgeted Allocation of KV cache for Long-context Inference"
+  },
+  {
+    "id": "2508.09001v1",
+    "title": "Retrospective Sparse Attention for Efficient Long-Context Generation"
+  },
+  {
+    "id": "2505.05772v1",
+    "title": "Sparse Attention Remapping with Clustering for Efficient LLM Decoding on   PIM"
+  },
+  {
+    "id": "2506.02634v4",
+    "title": "KVCache Cache in the Wild: Characterizing and Optimizing KVCache Cache   at a Large Cloud Provider"
+  },
+  {
+    "id": "2501.15383v1",
+    "title": "Qwen2.5-1M Technical Report"
+  },
+  {
+    "id": "2504.09775v3",
+    "title": "Understanding and Optimizing Multi-Stage AI Inference Pipelines"
+  },
+  {
+    "id": "2410.21465v3",
+    "title": "ShadowKV: KV Cache in Shadows for High-Throughput Long-Context LLM   Inference"
+  },
+  {
+    "id": "2505.24133v3",
+    "title": "R-KV: Redundancy-aware KV Cache Compression for Reasoning Models"
+  },
+  {
+    "id": "2503.17922v2",
+    "title": "WindowKV: Task-Adaptive Group-Wise KV Cache Window Selection for   Efficient LLM Inference"
+  },
+  {
+    "id": "2504.03651v1",
+    "title": "Echo: Efficient Co-Scheduling of Hybrid Online-Offline Tasks for Large   Language Model Serving"
+  },
+  {
+    "id": "2503.10325v2",
+    "title": "Collaborative Speculative Inference for Efficient LLM Inference Serving"
+  },
+  {
+    "id": "2407.15891v1",
+    "title": "RazorAttention: Efficient KV Cache Compression Through Retrieval Heads"
+  },
+  {
+    "id": "2410.14442v2",
+    "title": "A Systematic Study of Cross-Layer KV Sharing for Efficient LLM Inference"
+  },
+  {
+    "id": "2505.13109v1",
+    "title": "FreeKV: Boosting KV Cache Retrieval for Efficient LLM Inference"
+  },
+  {
+    "id": "2502.17421v2",
+    "title": "LongSpec: Long-Context Lossless Speculative Decoding with Efficient   Drafting and Verification"
+  },
+  {
+    "id": "2504.14489v2",
+    "title": "Optimizing SLO-oriented LLM Serving with PD-Multiplexing"
+  },
+  {
+    "id": "2405.16444v3",
+    "title": "CacheBlend: Fast Large Language Model Serving for RAG with Cached   Knowledge Fusion"
+  },
+  {
+    "id": "2504.09936v1",
+    "title": "KeepKV: Eliminating Output Perturbation in KV Cache Compression for   Efficient LLMs Inference"
+  },
+  {
+    "id": "2503.00022v1",
+    "title": "KVCrush: Key value cache size-reduction using similarity in   head-behaviour"
+  },
+  {
+    "id": "2405.04532v3",
+    "title": "QServe: W4A8KV4 Quantization and System Co-design for Efficient LLM   Serving"
+  },
+  {
+    "id": "2410.23537v1",
+    "title": "ALISE: Accelerating Large Language Model Serving with Speculative   Scheduling"
+  },
+  {
+    "id": "2503.04398v3",
+    "title": "Speculative MoE: Communication Efficient Parallel MoE Inference with   Speculative Token and Expert Pre-scheduling"
+  },
+  {
+    "id": "2309.06180v1",
+    "title": "Efficient Memory Management for Large Language Model Serving with   PagedAttention"
+  },
+  {
+    "id": "2410.12168v1",
+    "title": "COMET: Towards Partical W4A4KV4 LLMs Serving"
+  },
+  {
+    "id": "2506.19505v1",
+    "title": "AnTKV: Anchor Token-Aware Sub-Bit Vector Quantization for KV Cache in   Large Language Models"
+  },
+  {
+    "id": "2408.04107v3",
+    "title": "FDC: Fast KV Dimensionality Compression for Efficient LLM Inference"
+  },
+  {
+    "id": "2506.22033v1",
+    "title": "SiPipe: Bridging the CPU-GPU Utilization Gap for Efficient   Pipeline-Parallel LLM Inference"
+  },
+  {
+    "id": "2503.06433v1",
+    "title": "Seesaw: High-throughput LLM Inference via Model Re-sharding"
+  },
+  {
+    "id": "2506.02850v1",
+    "title": "METok: Multi-Stage Event-based Token Compression for Efficient Long   Video Understanding"
+  },
+  {
+    "id": "2410.11305v2",
+    "title": "QSpec: Speculative Decoding with Complementary Quantization Schemes"
+  },
+  {
+    "id": "2504.09590v1",
+    "title": "Efficient LLM Serving on Hybrid Real-time and Best-effort Requests"
+  },
+  {
+    "id": "2401.14361v3",
+    "title": "MoE-Infinity: Efficient MoE Inference on Personal Machines with   Sparsity-Aware Expert Cache"
+  },
+  {
+    "id": "2503.18773v1",
+    "title": "BitDecoding: Unlocking Tensor Cores for Long-Context LLMs Decoding with   Low-Bit KV Cache"
+  },
+  {
+    "id": "2507.07120v1",
+    "title": "Helix Parallelism: Rethinking Sharding Strategies for Interactive   Multi-Million-Token LLM Decoding"
+  },
+  {
+    "id": "2312.03788v1",
+    "title": "SmoothQuant+: Accurate and Efficient 4-bit Post-Training   WeightQuantization for LLM"
+  },
+  {
+    "id": "2412.12706v2",
+    "title": "More Tokens, Lower Precision: Towards the Optimal Token-Precision   Trade-off in KV Cache Compression"
+  },
+  {
+    "id": "2506.03296v3",
+    "title": "Parallel CPU-GPU Execution for LLM Inference on Constrained GPUs"
+  },
+  {
+    "id": "2506.20675v1",
+    "title": "Utility-Driven Speculative Decoding for Mixture-of-Experts"
+  },
+  {
+    "id": "2402.02750v2",
+    "title": "KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache"
+  },
+  {
+    "id": "2312.05516v3",
+    "title": "Stateful Large Language Model Serving with Pensieve"
+  },
+  {
+    "id": "2508.08256v1",
+    "title": "FIER: Fine-Grained and Efficient KV Cache Retrieval for Long-context LLM   Inference"
+  },
+  {
+    "id": "2507.08143v1",
+    "title": "Compactor: Calibrated Query-Agnostic KV Cache Compression with   Approximate Leverage Scores"
+  },
+  {
+    "id": "2505.19586v2",
+    "title": "TailorKV: A Hybrid Framework for Long-Context Inference via Tailored KV   Cache Optimization"
+  },
+  {
+    "id": "2502.14882v2",
+    "title": "CalibQuant: 1-Bit KV Cache Quantization for Multimodal LLMs"
+  },
+  {
+    "id": "2501.01005v2",
+    "title": "FlashInfer: Efficient and Customizable Attention Engine for LLM   Inference Serving"
+  },
+  {
+    "id": "2310.19102v3",
+    "title": "Atom: Low-bit Quantization for Efficient and Accurate LLM Serving"
+  },
+  {
+    "id": "2506.12708v3",
+    "title": "Serving Large Language Models on Huawei CloudMatrix384"
+  },
+  {
+    "id": "2305.17118v2",
+    "title": "Scissorhands: Exploiting the Persistence of Importance Hypothesis for   LLM KV Cache Compression at Test Time"
+  },
+  {
+    "id": "2311.04951v2",
+    "title": "Leveraging Speculative Sampling and KV-Cache Optimizations Together for   Generative AI using OpenVINO"
+  },
+  {
+    "id": "2502.04420v4",
+    "title": "KVTuner: Sensitivity-Aware Layer-Wise Mixed-Precision KV Cache   Quantization for Efficient and Nearly Lossless LLM Inference"
+  },
+  {
+    "id": "2502.14504v1",
+    "title": "PLPHP: Per-Layer Per-Head Vision Token Pruning for Efficient Large   Vision-Language Models"
+  },
+  {
+    "id": "2502.12665v2",
+    "title": "A$^2$ATS: Retrieval-Based KV Cache Reduction via Windowed Rotary   Position Embedding and Query-Aware Vector Quantization"
+  },
+  {
+    "id": "2404.00242v4",
+    "title": "DeFT: Decoding with Flash Tree-attention for Efficient Tree-structured   LLM Inference"
+  },
+  {
+    "id": "2505.00570v2",
+    "title": "FreqKV: Frequency Domain Key-Value Compression for Efficient Context   Window Extension"
+  },
+  {
+    "id": "2504.07494v1",
+    "title": "Apt-Serve: Adaptive Request Scheduling on Hybrid Cache for Scalable LLM   Inference Serving"
+  },
+  {
+    "id": "2506.22396v1",
+    "title": "QuickSilver -- Speeding up LLM Inference through Dynamic Token Halting,   KV Skipping, Contextual Token Fusion, and Adaptive Matryoshka Quantization"
+  },
+  {
+    "id": "2503.23294v1",
+    "title": "Cocktail: Chunk-Adaptive Mixed-Precision Quantization for Long-Context   LLM Inference"
+  },
+  {
+    "id": "2311.03285v3",
+    "title": "S-LoRA: Serving Thousands of Concurrent LoRA Adapters"
+  },
+  {
+    "id": "2501.04052v1",
+    "title": "The Power of Negative Zero: Datatype Customization for Quantized Large   Language Models"
+  },
+  {
+    "id": "2505.17052v1",
+    "title": "SpecEdge: Scalable Edge-Assisted Serving Framework for Interactive LLMs"
+  },
+  {
+    "id": "2502.15804v2",
+    "title": "FairKV: Balancing Per-Head KV Cache for Fast Multi-GPU Inference"
+  },
+  {
+    "id": "2301.12017v2",
+    "title": "Understanding INT4 Quantization for Transformer Models: Latency Speedup,   Composability, and Failure Cases"
+  },
+  {
+    "id": "2505.16210v1",
+    "title": "NQKV: A KV Cache Quantization Scheme Based on Normal Distribution   Characteristics"
+  },
+  {
+    "id": "2504.04704v2",
+    "title": "LagKV: Lag-Relative Information of the KV Cache Tells Which Tokens Are   Important"
+  },
+  {
+    "id": "2505.10938v1",
+    "title": "Accurate KV Cache Quantization with Outlier Tokens Tracing"
+  },
+  {
+    "id": "2506.10470v1",
+    "title": "TD-Pipe: Temporally-Disaggregated Pipeline Parallelism Architecture for   High-Throughput LLM Inference"
+  },
+  {
+    "id": "2504.11320v1",
+    "title": "Optimizing LLM Inference: Fluid-Guided Online Scheduling with Memory   Constraints"
+  },
+  {
+    "id": "2504.03648v1",
+    "title": "AIBrix: Towards Scalable, Cost-Effective Large Language Model Inference   Infrastructure"
+  },
+  {
+    "id": "2412.10319v2",
+    "title": "SCBench: A KV Cache-Centric Analysis of Long-Context Methods"
+  },
+  {
+    "id": "2503.24358v2",
+    "title": "SQuat: Subspace-orthogonal KV Cache Quantization"
+  },
+  {
+    "id": "2411.15024v3",
+    "title": "DyCoke: Dynamic Compression of Tokens for Fast Video Large Language   Models"
+  },
+  {
+    "id": "2410.10819v1",
+    "title": "DuoAttention: Efficient Long-Context LLM Inference with Retrieval and   Streaming Heads"
+  },
+  {
+    "id": "2403.17312v1",
+    "title": "ALISA: Accelerating Large Language Model Inference via Sparsity-Aware KV   Caching"
+  },
+  {
+    "id": "2505.22913v1",
+    "title": "Mustafar: Promoting Unstructured Sparsity for KV Cache Pruning in LLM   Inference"
+  },
+  {
+    "id": "2406.19707v1",
+    "title": "InfiniGen: Efficient Generative Inference of Large Language Models with   Dynamic KV Cache Management"
+  },
+  {
+    "id": "2502.03589v1",
+    "title": "HACK: Homomorphic Acceleration via Compression of the Key-Value Cache   for Disaggregated LLM Inference"
+  },
+  {
+    "id": "2504.06319v1",
+    "title": "Accelerating LLM Inference Throughput via Asynchronous KV Cache   Prefetching"
+  },
+  {
+    "id": "2412.03594v2",
+    "title": "BatchLLM: Optimizing Large Batched LLM Inference with Global Prefix   Sharing and Throughput-oriented Token Batching"
+  },
+  {
+    "id": "2507.18748v1",
+    "title": "PPipe: Efficient Video Analytics Serving on Heterogeneous GPU Clusters   via Pool-Based Pipeline Parallelism"
+  },
+  {
+    "id": "2403.11421v1",
+    "title": "FastDecode: High-Throughput GPU-Efficient LLM Serving using   Heterogeneous Pipelines"
+  },
+  {
+    "id": "2401.05391v2",
+    "title": "Efficient LLM inference solution on Intel GPU"
+  },
+  {
+    "id": "2404.00456v2",
+    "title": "QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs"
+  },
+  {
+    "id": "2507.11830v1",
+    "title": "Arctic Inference with Shift Parallelism: Fast and Efficient Open Source   Inference System for Enterprise AI"
+  },
+  {
+    "id": "2506.18879v1",
+    "title": "CommVQ: Commutative Vector Quantization for KV Cache Compression"
+  },
+  {
+    "id": "2411.04965v1",
+    "title": "BitNet a4.8: 4-bit Activations for 1-bit LLMs"
+  },
+  {
+    "id": "2506.09397v4",
+    "title": "SLED: A Speculative LLM Decoding Framework for Efficient Edge Serving"
+  },
+  {
+    "id": "2505.22179v2",
+    "title": "Speculative Decoding Meets Quantization: Compatibility Evaluation and   Hierarchical Framework Design"
+  },
+  {
+    "id": "2412.03131v2",
+    "title": "Unifying KV Cache Compression for Large Language Models with LeanKV"
+  },
+  {
+    "id": "2506.08018v1",
+    "title": "KVmix: Gradient-Based Layer Importance-Aware Mixed-Precision   Quantization for KV Cache"
+  },
+  {
+    "id": "2406.02532v3",
+    "title": "SpecExec: Massively Parallel Speculative Decoding for Interactive LLM   Inference on Consumer Devices"
+  },
+  {
+    "id": "2507.02620v2",
+    "title": "FlowSpec: Continuous Pipelined Speculative Decoding for Efficient   Distributed LLM Inference"
+  },
+  {
+    "id": "2407.14057v1",
+    "title": "LazyLLM: Dynamic Token Pruning for Efficient Long Context LLM Inference"
+  },
+  {
+    "id": "2503.09716v1",
+    "title": "MoE-Gen: High-Throughput MoE Inference on a Single GPU with Module-Based   Batching"
+  },
+  {
+    "id": "2508.08457v1",
+    "title": "Architecting Long-Context LLM Acceleration with Packing-Prefetch   Scheduler and Ultra-Large Capacity On-Chip Memories"
+  },
+  {
+    "id": "2408.05235v1",
+    "title": "SLO-aware GPU Frequency Scaling for Energy Efficient LLM Inference   Serving"
+  },
+  {
+    "id": "2412.14219v2",
+    "title": "A Survey on Inference Optimization Techniques for Mixture of Experts   Models"
+  },
+  {
+    "id": "2412.20105v1",
+    "title": "ST$^3$: Accelerating Multimodal Large Language Model by Spatial-Temporal   Visual Token Trimming"
+  },
+  {
+    "id": "2505.03745v1",
+    "title": "AccLLM: Accelerating Long-Context LLM Inference Via Algorithm-Hardware   Co-Design"
+  },
+  {
+    "id": "2411.15785v2",
+    "title": "A Method for Building Large Language Models with Predefined KV Cache   Capacity"
+  },
+  {
+    "id": "2405.04304v5",
+    "title": "Dynamic Speculation Lookahead Accelerates Speculative Decoding of Large   Language Models"
+  },
+  {
+    "id": "2411.18424v1",
+    "title": "FastSwitch: Optimizing Context Switching Efficiency in Fairness-aware   Large Language Model Serving"
+  },
+  {
+    "id": "2409.16546v2",
+    "title": "AlignedKV: Reducing Memory Access of KV-Cache with Precision-Aligned   Quantization"
+  },
+  {
+    "id": "2501.01792v1",
+    "title": "Efficient LLM Inference with Activation Checkpointing and Hybrid Caching"
+  },
+  {
+    "id": "2409.10593v3",
+    "title": "CSKV: Training-Efficient Channel Shrinking for KV Cache in Long-Context   Scenarios"
+  },
+  {
+    "id": "2503.00392v1",
+    "title": "Progressive Sparse Attention: Algorithm and System Co-design for   Efficient Attention in LLM Serving"
+  },
+  {
+    "id": "2506.02006v1",
+    "title": "Efficient and Workload-Aware LLM Serving via Runtime Layer Swapping and   KV Cache Resizing"
+  },
+  {
+    "id": "2507.08523v1",
+    "title": "InferLog: Accelerating LLM Inference for Online Log Parsing via   ICL-oriented Prefix Caching"
+  },
+  {
+    "id": "2411.05787v2",
+    "title": "RefreshKV: Updating Small KV Cache During Long-form Generation"
+  },
+  {
+    "id": "2506.06266v3",
+    "title": "Cartridges: Lightweight and general-purpose long context representations   via self-study"
+  },
+  {
+    "id": "2404.15153v2",
+    "title": "Performance Characterization of Expert Router for Scalable LLM Inference"
+  },
+  {
+    "id": "2504.09261v1",
+    "title": "Head-Aware KV Cache Compression for Efficient Visual Autoregressive   Modeling"
+  },
+  {
+    "id": "2411.01433v2",
+    "title": "HOBBIT: A Mixed Precision Expert Offloading System for Fast MoE   Inference"
+  },
+  {
+    "id": "2502.14866v2",
+    "title": "LServe: Efficient Long-sequence LLM Serving with Unified Sparse   Attention"
+  },
+  {
+    "id": "2411.08982v1",
+    "title": "Lynx: Enabling Efficient MoE Inference through Dynamic Batch-Aware   Expert Selection"
+  },
+  {
+    "id": "2502.20330v2",
+    "title": "RAPID: Long-Context Inference with Retrieval-Augmented Speculative   Decoding"
+  },
+  {
+    "id": "2403.04643v2",
+    "title": "QAQ: Quality Adaptive Quantization for LLM KV Cache"
+  },
+  {
+    "id": "2503.18278v2",
+    "title": "TopV: Compatible Token Pruning with Inference Time Optimization for Fast   and Low-Memory Multimodal Vision Language Model"
+  },
+  {
+    "id": "2403.01876v1",
+    "title": "DéjàVu: KV-cache Streaming for Fast, Fault-tolerant Generative LLM   Serving"
+  },
+  {
+    "id": "2502.10047v1",
+    "title": "Janus: Collaborative Vision Transformer Under Dynamic Network   Environment"
+  },
+  {
+    "id": "2411.13820v2",
+    "title": "InstCache: A Predictive Cache for LLM Serving"
+  },
+  {
+    "id": "2501.16383v2",
+    "title": "RotateKV: Accurate and Robust 2-Bit KV Cache Quantization for LLMs via   Outlier-Aware Adaptive Rotations"
+  },
+  {
+    "id": "2501.12388v1",
+    "title": "Accelerating End-Cloud Collaborative Inference via Near Bubble-free   Pipeline Optimization"
+  },
+  {
+    "id": "2506.11886v1",
+    "title": "Beyond Homogeneous Attention: Memory-Efficient LLMs via   Fourier-Approximated KV Cache"
+  },
+  {
+    "id": "2410.00531v1",
+    "title": "TPI-LLM: Serving 70B-scale LLMs Efficiently on Low-resource Edge Devices"
+  },
+  {
+    "id": "2406.02657v2",
+    "title": "Block Transformer: Global-to-Local Language Modeling for Fast Inference"
+  },
+  {
+    "id": "2506.21184v1",
+    "title": "Task-Aware KV Compression For Cost-Effective Long Video Understanding"
+  },
+  {
+    "id": "2405.16406v4",
+    "title": "SpinQuant: LLM quantization with learned rotations"
+  },
+  {
+    "id": "2409.04992v1",
+    "title": "InstInfer: In-Storage Attention Offloading for Cost-Effective   Long-Context LLM Inference"
+  },
+  {
+    "id": "2504.04104v1",
+    "title": "PipeDec: Low-Latency Pipeline-based Inference with Dynamic Speculative   Decoding towards Large-scale Models"
+  },
+  {
+    "id": "2505.24095v1",
+    "title": "SkyLB: A Locality-Aware Cross-Region Load Balancer for LLM Inference"
+  },
+  {
+    "id": "2505.21889v2",
+    "title": "EFIM: Efficient Serving of LLMs for Infilling Tasks with Improved KV   Cache Reuse"
+  },
+  {
+    "id": "2503.16257v1",
+    "title": "Plug-and-Play 1.x-Bit KV Cache Quantization for Video Large Language   Models"
+  },
+  {
+    "id": "2505.03756v1",
+    "title": "Improving the Serving Performance of Multi-LoRA Large Language Models   via Efficient LoRA and KV Cache Management"
+  },
+  {
+    "id": "2502.09921v1",
+    "title": "INF^2: High-Throughput Generative Inference of Large Language Models   using Near-Storage Processing"
+  },
+  {
+    "id": "2506.02024v1",
+    "title": "NestedFP: High-Performance, Memory-Efficient Dual-Precision Floating   Point Support for LLMs"
+  },
+  {
+    "id": "2505.12658v1",
+    "title": "HydraInfer: Hybrid Disaggregated Scheduling for Multimodal Large   Language Model Serving"
+  },
+  {
+    "id": "2401.06761v1",
+    "title": "APAR: LLMs Can Do Auto-Parallel Auto-Regressive Decoding"
+  },
+  {
+    "id": "2505.17787v1",
+    "title": "Titanus: Enabling KV Cache Pruning and Quantization On-the-Fly for LLM   Acceleration"
+  },
+  {
+    "id": "2403.09054v2",
+    "title": "Keyformer: KV Cache Reduction through Key Tokens Selection for Efficient   Generative Inference"
+  },
+  {
+    "id": "2410.14731v2",
+    "title": "MatryoshkaKV: Adaptive KV Compression via Trainable Orthogonal   Projection"
+  },
+  {
+    "id": "2410.14740v2",
+    "title": "Harnessing Your DRAM and SSD for Sustainable and Accessible LLM   Inference with Mixed-Precision and Multi-level Caching"
+  },
+  {
+    "id": "2508.06024v1",
+    "title": "EC2MoE: Adaptive End-Cloud Pipeline Collaboration Enabling Scalable   Mixture-of-Experts Inference"
+  },
+  {
+    "id": "2410.18248v2",
+    "title": "Fast Inference for Augmented Large Language Models"
+  },
+  {
+    "id": "2505.18231v1",
+    "title": "NSNQuant: A Double Normalization Approach for Calibration-Free Low-Bit   Vector Quantization of KV Cache"
+  },
+  {
+    "id": "2506.01986v1",
+    "title": "SpecMemo: Speculative Decoding is in Your Pocket"
+  },
+  {
+    "id": "2412.11741v1",
+    "title": "CSR:Achieving 1 Bit Key-Value Cache via Sparse Representation"
+  },
+  {
+    "id": "2412.10418v2",
+    "title": "Constrained Decoding with Speculative Lookaheads"
+  },
+  {
+    "id": "2412.08585v3",
+    "title": "TurboAttention: Efficient Attention Approximation For High Throughputs   LLMs"
+  },
+  {
+    "id": "2506.11418v1",
+    "title": "Efficient Long-Context LLM Inference via KV Cache Clustering"
+  },
+  {
+    "id": "2404.12457v2",
+    "title": "RAGCache: Efficient Knowledge Caching for Retrieval-Augmented Generation"
+  },
+  {
+    "id": "2508.09072v1",
+    "title": "READER: Retrieval-Assisted Drafter for Efficient LLM Inference"
+  },
+  {
+    "id": "2401.18079v6",
+    "title": "KVQuant: Towards 10 Million Context Length LLM Inference with KV Cache   Quantization"
+  },
+  {
+    "id": "2505.24584v2",
+    "title": "AutoChemSchematic AI: A Closed-Loop, Physics-Aware Agentic Framework for   Auto-Generating Chemical Process and Instrumentation Diagrams"
+  },
+  {
+    "id": "2503.19950v1",
+    "title": "LogQuant: Log-Distributed 2-Bit Quantization of KV Cache with Superior   Accuracy Preservation"
+  },
+  {
+    "id": "2507.05240v1",
+    "title": "StreamVLN: Streaming Vision-and-Language Navigation via SlowFast Context   Modeling"
+  },
+  {
+    "id": "2508.06447v1",
+    "title": "SlimInfer: Accelerating Long-Context LLM Inference via Dynamic Token   Pruning"
+  },
+  {
+    "id": "2503.18599v2",
+    "title": "Oaken: Fast and Efficient LLM Serving with Online-Offline Hybrid KV   Cache Quantization"
+  },
+  {
+    "id": "2506.15155v1",
+    "title": "eLLM: Elastic Memory Management Framework for Efficient LLM Serving"
+  },
+  {
+    "id": "2405.12532v2",
+    "title": "PyramidInfer: Pyramid KV Cache Compression for High-throughput LLM   Inference"
+  },
+  {
+    "id": "2401.07851v3",
+    "title": "Unlocking Efficiency in Large Language Model Inference: A Comprehensive   Survey of Speculative Decoding"
+  },
+  {
+    "id": "2409.20002v4",
+    "title": "The Early Bird Catches the Leak: Unveiling Timing Side Channels in LLM   Serving Systems"
+  },
+  {
+    "id": "2503.11549v1",
+    "title": "Similarity-Aware Token Pruning: Your VLM but Faster"
+  },
+  {
+    "id": "2504.04514v2",
+    "title": "Saliency-driven Dynamic Token Pruning for Large Language Models"
+  },
+  {
+    "id": "2501.00032v1",
+    "title": "Highly Optimized Kernels and Fine-Grained Codebooks for LLM Inference on   Arm CPUs"
+  },
+  {
+    "id": "2303.08308v1",
+    "title": "SpaceEvo: Hardware-Friendly Search Space Design for Efficient INT8   Inference"
+  },
+  {
+    "id": "2504.08242v1",
+    "title": "Jupiter: Fast and Resource-Efficient Collaborative Inference of   Generative LLMs on Edge Devices"
+  },
+  {
+    "id": "2503.09304v1",
+    "title": "Priority-Aware Preemptive Scheduling for Mixed-Priority Workloads in MoE   Inference"
+  },
+  {
+    "id": "2411.09317v1",
+    "title": "Pie: Pooling CPU Memory for LLM Inference"
+  },
+  {
+    "id": "2407.20485v2",
+    "title": "A2SF: Accumulative Attention Scoring with Forgetting Factor for Token   Pruning in Transformer Decoder"
+  },
+  {
+    "id": "2411.03357v1",
+    "title": "PipeLLM: Fast and Confidential Large Language Model Services with   Speculative Pipelined Encryption"
+  },
+  {
+    "id": "2407.12820v2",
+    "title": "PQCache: Product Quantization-based KVCache for Long Context LLM   Inference"
+  },
+  {
+    "id": "2502.17599v2",
+    "title": "MEDA: Dynamic KV Cache Allocation for Efficient Multimodal Long-Context   Inference"
+  },
+  {
+    "id": "2402.01528v4",
+    "title": "Decoding Speculative Decoding"
+  },
+  {
+    "id": "2405.06219v3",
+    "title": "SKVQ: Sliding-window Key and Value Cache Quantization for Large Language   Models"
+  },
+  {
+    "id": "2505.20276v2",
+    "title": "Does quantization affect models' performance on long-context tasks?"
+  },
+  {
+    "id": "2412.14363v2",
+    "title": "ResQ: Mixed-Precision Quantization of Large Language Models with   Low-Rank Residuals"
+  },
+  {
+    "id": "2508.02343v1",
+    "title": "MicroMix: Efficient Mixed-Precision Quantization with Microscaling   Formats for Large Language Models"
+  },
+  {
+    "id": "2508.04257v1",
+    "title": "KVSink: Understanding and Enhancing the Preservation of Attention Sinks   in KV Cache Quantization for LLMs"
+  },
+  {
+    "id": "2401.08671v1",
+    "title": "DeepSpeed-FastGen: High-throughput Text Generation for LLMs via MII and   DeepSpeed-Inference"
+  },
+  {
+    "id": "2503.11972v2",
+    "title": "MoDM: Efficient Serving for Image Generation via Mixture-of-Diffusion   Models"
+  },
+  {
+    "id": "2410.15252v1",
+    "title": "Lossless KV Cache Compression to 2%"
+  },
+  {
+    "id": "2506.08373v2",
+    "title": "Draft-based Approximate Inference for LLMs"
+  },
+  {
+    "id": "2501.10375v2",
+    "title": "DAOP: Data-Aware Offloading and Predictive Pre-Calculation for Efficient   MoE Inference"
+  },
+  {
+    "id": "2407.11798v2",
+    "title": "PipeInfer: Accelerating LLM Inference using Asynchronous Pipelined   Speculation"
+  },
+  {
+    "id": "2408.15766v3",
+    "title": "Learning Harmonized Representations for Speculative Sampling"
+  },
+  {
+    "id": "2404.04793v2",
+    "title": "SqueezeAttention: 2D Management of KV-Cache in LLM Inference via   Layer-wise Optimal Budget"
+  },
+  {
+    "id": "2306.06000v1",
+    "title": "S$^{3}$: Increasing GPU Utilization during Generative Inference for   Higher Throughput"
+  },
+  {
+    "id": "2411.02355v3",
+    "title": "\"Give Me BF16 or Give Me Death\"? Accuracy-Performance Trade-Offs in LLM   Quantization"
+  },
+  {
+    "id": "2505.17074v1",
+    "title": "Semi-Clairvoyant Scheduling of Speculative Decoding Requests to Minimize   LLM Inference Latency"
+  },
+  {
+    "id": "2507.21433v2",
+    "title": "MemShare: Memory Efficient Inference for Large Reasoning Models through   KV Cache Reuse"
+  },
+  {
+    "id": "2303.06522v1",
+    "title": "Token Sparsification for Faster Medical Image Segmentation"
+  },
+  {
+    "id": "2406.04523v1",
+    "title": "Proofread: Fixes All Errors with One Tap"
+  },
+  {
+    "id": "2503.18869v3",
+    "title": "Reimagining Memory Access for LLM Inference: Compression-Aware Memory   Controller Design"
+  },
+  {
+    "id": "2507.14392v1",
+    "title": "Characterizing Communication Patterns in Distributed Large Language   Model Inference"
+  },
+  {
+    "id": "2412.12639v3",
+    "title": "Falcon: Faster and Parallel Inference of Large Language Models through   Enhanced Semi-Autoregressive Drafting and Custom-Designed Decoding Tree"
+  },
+  {
+    "id": "2502.01960v1",
+    "title": "MPIC: Position-Independent Multimodal Context Caching System for   Efficient MLLM Serving"
+  },
+  {
+    "id": "2502.07864v5",
+    "title": "TransMLA: Multi-Head Latent Attention Is All You Need"
+  },
+  {
+    "id": "2406.03482v2",
+    "title": "QJL: 1-Bit Quantized JL Transform for KV Cache Quantization with Zero   Overhead"
+  },
+  {
+    "id": "2502.15524v1",
+    "title": "Towards Swift Serverless LLM Cold Starts with ParaServe"
+  },
+  {
+    "id": "2402.09398v2",
+    "title": "Get More with LESS: Synthesizing Recurrence with KV Cache Compression   for Efficient LLM Inference"
+  },
+  {
+    "id": "2312.05693v2",
+    "title": "Agile-Quant: Activation-Guided Quantization for Faster Inference of LLMs   on the Edge"
+  },
+  {
+    "id": "2412.17246v2",
+    "title": "BLITZSCALE: Fast and Live Large Model Autoscaling with O(1) Host Caching"
+  },
+  {
+    "id": "2507.00715v1",
+    "title": "EARN: Efficient Inference Acceleration for LLM-based Generative   Recommendation by Register Tokens"
+  },
+  {
+    "id": "2410.12513v3",
+    "title": "FiRST: Finetuning Router-Selective Transformers for Input-Adaptive   Latency Reduction"
+  },
+  {
+    "id": "2408.15792v1",
+    "title": "Efficient LLM Scheduling by Learning to Rank"
+  },
+  {
+    "id": "2503.13565v1",
+    "title": "ML-SpecQD: Multi-Level Speculative Decoding with Quantized Drafts"
+  },
+  {
+    "id": "2405.05329v2",
+    "title": "KV-Runahead: Scalable Causal LLM Inference by Parallel Key-Value Cache   Generation"
+  },
+  {
+    "id": "2507.19823v1",
+    "title": "HCAttention: Extreme KV Cache Compression via Heterogeneous Attention   Computing for LLMs"
+  },
+  {
+    "id": "2506.00413v1",
+    "title": "Accelerating Diffusion LLMs via Adaptive Parallel Decoding"
+  },
+  {
+    "id": "2501.13331v2",
+    "title": "Qrazor: Reliable and Effortless 4-bit LLM Quantization by Significant   Data Razoring"
+  },
+  {
+    "id": "2404.18057v1",
+    "title": "Efficient LLM Inference with Kcache"
+  },
+  {
+    "id": "2507.17133v1",
+    "title": "BrownoutServe: SLO-Aware Inference Serving under Bursty Workloads for   MoE-based LLMs"
+  },
+  {
+    "id": "2505.19645v2",
+    "title": "MoESD: Unveil Speculative Decoding's Potential for Accelerating Sparse   MoE"
+  },
+  {
+    "id": "2411.01142v1",
+    "title": "NEO: Saving GPU Memory Crisis with CPU Offloading for Online LLM   Inference"
+  },
+  {
+    "id": "2503.01066v2",
+    "title": "Alchemist: Towards the Design of Efficient Online Continual Learning   System"
+  },
+  {
+    "id": "2501.15021v1",
+    "title": "AKVQ-VL: Attention-Aware KV Cache Adaptive 2-Bit Quantization for   Vision-Language Models"
+  },
+  {
+    "id": "2502.11501v2",
+    "title": "Token Pruning in Multimodal Large Language Models: Are We Solving the   Right Problem?"
+  },
+  {
+    "id": "2410.16179v4",
+    "title": "MagicPIG: LSH Sampling for Efficient LLM Generation"
+  },
+  {
+    "id": "2406.10247v1",
+    "title": "QCQA: Quality and Capacity-aware grouped Query Attention"
+  },
+  {
+    "id": "2504.02118v1",
+    "title": "LLMPi: Optimizing LLMs for High-Throughput on Raspberry Pi"
+  },
+  {
+    "id": "2505.07203v1",
+    "title": "PrefillOnly: An Inference Engine for Prefill-only Workloads in Large   Language Model Applications"
+  },
+  {
+    "id": "2305.05920v3",
+    "title": "Fast Distributed Inference Serving for Large Language Models"
+  },
+  {
+    "id": "2503.23817v1",
+    "title": "MVDRAM: Enabling GeMV Execution in Unmodified DRAM for Low-Bit LLM   Acceleration"
+  },
+  {
+    "id": "2503.05096v1",
+    "title": "SpecServe: Efficient and SLO-Aware Large Language Model Serving with   Adaptive Speculative Decoding"
+  },
+  {
+    "id": "2505.14638v1",
+    "title": "Dual Precision Quantization for Efficient and Accurate Deep Neural   Networks Inference"
+  },
+  {
+    "id": "2408.00008v2",
+    "title": "ScaleLLM: A Resource-Frugal LLM Serving Framework by Optimizing   End-to-End Efficiency"
+  },
+  {
+    "id": "2408.10284v1",
+    "title": "AdapMoE: Adaptive Sensitivity-based Expert Gating and Management for   Efficient MoE Inference"
+  },
+  {
+    "id": "2506.07311v1",
+    "title": "Paged Attention Meets FlexAttention: Unlocking Long-Context Efficiency   in Deployed Inference"
+  },
+  {
+    "id": "2410.05589v1",
+    "title": "ParallelSpec: Parallel Drafter for Efficient Speculative Decoding"
+  },
+  {
+    "id": "2504.03661v2",
+    "title": "MILLION: Mastering Long-Context LLM Inference Via Outlier-Immunized KV   Product Quantization"
+  },
+  {
+    "id": "2501.12162v2",
+    "title": "AdaServe: Accelerating Multi-SLO LLM Serving with SLO-Customized   Speculative Decoding"
+  },
+  {
+    "id": "2508.05211v1",
+    "title": "VFlowOpt: A Token Pruning Framework for LMMs with Visual Information   Flow-Guided Optimization"
+  },
+  {
+    "id": "2408.07802v2",
+    "title": "Kraken: Inherently Parallel Transformers For Efficient Multi-Device   Inference"
+  },
+  {
+    "id": "2406.12335v2",
+    "title": "Attention Score is not All You Need for Token Importance Indicator in KV   Cache Reduction: Value Also Matters"
+  },
+  {
+    "id": "2505.19201v2",
+    "title": "DREAM: Drafting with Refined Target Features and Entropy-Adaptive   Cross-Attention Fusion for Multimodal Speculative Decoding"
+  },
+  {
+    "id": "2311.09550v1",
+    "title": "A Speed Odyssey for Deployable Quantization of LLMs"
+  },
+  {
+    "id": "2504.05897v1",
+    "title": "HybriMoE: Hybrid CPU-GPU Scheduling and Cache Management for Efficient   MoE Inference"
+  },
+  {
+    "id": "2303.06182v2",
+    "title": "Towards MoE Deployment: Mitigating Inefficiencies in Mixture-of-Expert   (MoE) Inference"
+  },
+  {
+    "id": "2507.00605v1",
+    "title": "Quantize-Sample-and-Verify: LLM Acceleration via Adaptive Edge-Cloud   Speculative Decoding"
+  },
+  {
+    "id": "2402.12280v2",
+    "title": "Plato: Plan to Efficiently Decode for Large Language Model Inference"
+  },
+  {
+    "id": "2407.20272v1",
+    "title": "An Efficient Inference Framework for Early-exit Large Language Models"
+  },
+  {
+    "id": "2501.08192v2",
+    "title": "PRESERVE: Prefetching Model Weights and KV-Cache in Distributed LLM   Serving"
+  },
+  {
+    "id": "2507.16099v1",
+    "title": "TorchAO: PyTorch-Native Training-to-Serving Model Optimization"
+  },
+  {
+    "id": "2410.13212v1",
+    "title": "AsymKV: Enabling 1-Bit Quantization of KV Cache with Layer-Wise   Asymmetric Quantization Configurations"
+  },
+  {
+    "id": "2408.05646v2",
+    "title": "Eigen Attention: Attention in Low-Rank Space for KV Cache Compression"
+  },
+  {
+    "id": "2502.15779v1",
+    "title": "Rotate, Clip, and Partition: Towards W2A4KV4 Quantization by Integrating   Rotation and Learnable Non-uniform Quantizer"
+  },
+  {
+    "id": "2403.20137v1",
+    "title": "Accurate Block Quantization in LLMs with Outliers"
+  },
+  {
+    "id": "2305.16619v1",
+    "title": "2-bit Conformer quantization for automatic speech recognition"
+  },
+  {
+    "id": "2508.08895v1",
+    "title": "ASPD: Unlocking Adaptive Serial-Parallel Decoding by Exploring Intrinsic   Parallelism in LLMs"
+  },
+  {
+    "id": "2412.18169v4",
+    "title": "KunServe: Efficient Parameter-centric Memory Management for LLM Serving"
+  },
+  {
+    "id": "2506.20187v2",
+    "title": "Breaking the Boundaries of Long-Context LLM Inference: Adaptive KV   Management on a Single Commodity GPU"
+  },
+  {
+    "id": "2410.15704v1",
+    "title": "Residual vector quantization for KV cache compression in large language   model"
+  },
+  {
+    "id": "2411.01417v1",
+    "title": "BF-IMNA: A Bit Fluid In-Memory Neural Architecture for Neural Network   Acceleration"
+  },
+  {
+    "id": "2506.19830v1",
+    "title": "Scaling Speculative Decoding with Lookahead Reasoning"
+  },
+  {
+    "id": "2411.05894v1",
+    "title": "SSSD: Simply-Scalable Speculative Decoding"
+  },
+  {
+    "id": "2508.06526v1",
+    "title": "PiKV: KV Cache Management System for Mixture of Experts"
+  },
+  {
+    "id": "2310.18859v2",
+    "title": "SiDA-MoE: Sparsity-Inspired Data-Aware Serving for Efficient and   Scalable Large Mixture-of-Experts Models"
+  },
+  {
+    "id": "2402.15220v4",
+    "title": "ChunkAttention: Efficient Self-Attention with Prefix-Aware KV Cache and   Two-Phase Partition"
+  },
+  {
+    "id": "2503.13773v2",
+    "title": "Mitigating KV Cache Competition to Enhance User Experience in LLM   Inference"
+  },
+  {
+    "id": "2304.08782v2",
+    "title": "Sparks of GPTs in Edge Intelligence for Metaverse: Caching and Inference   for Mobile AIGC Services"
+  },
+  {
+    "id": "2503.24000v1",
+    "title": "Rethinking Key-Value Cache Compression Techniques for Large Language   Model Serving"
+  },
+  {
+    "id": "2406.14066v3",
+    "title": "TurboSpec: Closed-loop Speculation Control System for Optimizing LLM   Serving Goodput"
+  },
+  {
+    "id": "2406.07056v1",
+    "title": "Effectively Compress KV Heads for LLM"
+  },
+  {
+    "id": "2406.10774v2",
+    "title": "Quest: Query-Aware Sparsity for Efficient Long-Context LLM Inference"
+  },
+  {
+    "id": "2508.06297v1",
+    "title": "KV Cache Compression for Inference Efficiency in LLMs: A Review"
+  },
+  {
+    "id": "2505.22618v3",
+    "title": "Fast-dLLM: Training-free Acceleration of Diffusion LLM by Enabling KV   Cache and Parallel Decoding"
+  },
+  {
+    "id": "2405.12591v1",
+    "title": "Unlocking Data-free Low-bit Quantization with Matrix Decomposition for   KV Cache Compression"
+  },
+  {
+    "id": "2310.07240v6",
+    "title": "CacheGen: KV Cache Compression and Streaming for Fast Large Language   Model Serving"
+  },
+  {
+    "id": "2405.00732v1",
+    "title": "LoRA Land: 310 Fine-tuned LLMs that Rival GPT-4, A Technical Report"
+  },
+  {
+    "id": "2307.02628v1",
+    "title": "SkipDecode: Autoregressive Skip Decoding with Batching and Caching for   Efficient LLM Inference"
+  },
+  {
+    "id": "2312.06838v1",
+    "title": "Optimizing High Throughput Inference on Graph Neural Networks at Shared   Computing Facilities with the NVIDIA Triton Inference Server"
+  },
+  {
+    "id": "2502.07115v4",
+    "title": "Online Scheduling for LLM Inference with KV Cache Constraints"
+  },
+  {
+    "id": "2505.15781v1",
+    "title": "dKV-Cache: The Cache for Diffusion Language Models"
+  },
+  {
+    "id": "2506.03700v1",
+    "title": "AdaDecode: Accelerating LLM Decoding with Adaptive Layer Parallelism"
+  },
+  {
+    "id": "2504.19867v1",
+    "title": "semi-PD: Towards Efficient LLM Serving via Phase-Wise Disaggregated   Computation and Unified Storage"
+  },
+  {
+    "id": "2410.07590v1",
+    "title": "TurboRAG: Accelerating Retrieval-Augmented Generation with Precomputed   KV Caches for Chunked Text"
+  },
+  {
+    "id": "2412.20166v2",
+    "title": "LoL-PIM: Long-Context LLM Decoding with Scalable DRAM-PIM System"
+  },
+  {
+    "id": "2412.05896v1",
+    "title": "XKV: Personalized KV Cache Memory Reduction for Long-Context LLM   Inference"
+  },
+  {
+    "id": "2502.06786v3",
+    "title": "Matryoshka Quantization"
+  },
+  {
+    "id": "2308.13287v1",
+    "title": "Efficient Learned Lossless JPEG Recompression"
+  },
+  {
+    "id": "2405.04437v3",
+    "title": "vAttention: Dynamic Memory Management for Serving LLMs without   PagedAttention"
+  },
+  {
+    "id": "2405.10637v2",
+    "title": "Layer-Condensed KV Cache for Efficient Inference of Large Language   Models"
+  },
+  {
+    "id": "2412.19442v3",
+    "title": "A Survey on Large Language Model Acceleration based on KV Cache   Management"
+  },
+  {
+    "id": "2503.18292v1",
+    "title": "Jenga: Effective Memory Management for Serving LLM with Heterogeneity"
+  },
+  {
+    "id": "2505.10951v2",
+    "title": "SubGCache: Accelerating Graph-based RAG with Subgraph-level KV Cache"
+  },
+  {
+    "id": "2504.19516v1",
+    "title": "Bullet: Boosting GPU Utilization for LLM Serving via Dynamic   Spatial-Temporal Orchestration"
+  },
+  {
+    "id": "2405.19751v2",
+    "title": "HQ-DiT: Efficient Diffusion Transformer with FP4 Hybrid Quantization"
+  },
+  {
+    "id": "2410.11744v1",
+    "title": "DySpec: Faster Speculative Decoding with Dynamic Token Tree Structure"
+  },
+  {
+    "id": "2405.01004v1",
+    "title": "Deep Learning Models in Speech Recognition: Measuring GPU Energy   Consumption, Impact of Noise and Model Quantization for Edge Deployment"
+  },
+  {
+    "id": "2505.18610v1",
+    "title": "PM-KVQ: Progressive Mixed-precision KV Cache Quantization for Long-CoT   LLMs"
+  },
+  {
+    "id": "2404.07947v1",
+    "title": "ExeGPT: Constraint-Aware Resource Scheduling for LLM Inference"
+  },
+  {
+    "id": "2507.14397v1",
+    "title": "Efficient LLM Inference: Bandwidth, Compute, Synchronization, and   Capacity are all you need"
+  },
+  {
+    "id": "2505.17694v1",
+    "title": "FlashForge: Ultra-Efficient Prefix-Aware Attention for LLM Decoding"
+  },
+  {
+    "id": "2309.05210v3",
+    "title": "Understanding the Impact of Post-Training Quantization on Large Language   Models"
+  },
+  {
+    "id": "2507.19906v2",
+    "title": "CaliDrop: KV Cache Compression with Calibration"
+  },
+  {
+    "id": "2507.17123v1",
+    "title": "Computer Vision for Real-Time Monkeypox Diagnosis on Embedded Systems"
+  },
+  {
+    "id": "2502.15304v1",
+    "title": "SVDq: 1.25-bit and 410x Key Cache Compression for LLM Attention"
+  },
+  {
+    "id": "2410.09324v1",
+    "title": "Token Pruning using a Lightweight Background Aware Vision Transformer"
+  },
+  {
+    "id": "2410.03111v1",
+    "title": "LoRC: Low-Rank Compression for LLMs KV Cache with a Progressive   Compression Strategy"
+  },
+  {
+    "id": "2505.06901v1",
+    "title": "Ecco: Improving Memory Bandwidth and Capacity for LLMs via Entropy-aware   Cache Compression"
+  },
+  {
+    "id": "2507.11273v1",
+    "title": "KV-Latent: Dimensional-level KV Cache Reduction with Frequency-aware   Rotary Positional Embedding"
+  },
+  {
+    "id": "2502.04077v2",
+    "title": "AttentionPredictor: Temporal Pattern Matters for Efficient LLM Inference"
+  },
+  {
+    "id": "2503.13737v1",
+    "title": "AccelGen: Heterogeneous SLO-Guaranteed High-Throughput LLM Inference   Serving for Diverse Applications"
+  },
+  {
+    "id": "2308.04623v1",
+    "title": "Accelerating LLM Inference with Staged Speculative Decoding"
+  },
+  {
+    "id": "2505.05286v1",
+    "title": "HEXGEN-TEXT2SQL: Optimizing LLM Inference Request Scheduling for Agentic   Text-to-SQL Workflow"
+  },
+  {
+    "id": "2507.21276v1",
+    "title": "LeMix: Unified Scheduling for LLM Training and Inference on Multi-GPU   Systems"
+  },
+  {
+    "id": "2406.09827v3",
+    "title": "A Training-free Sub-quadratic Cost Transformer Model Serving Framework   With Hierarchically Pruned Attention"
+  },
+  {
+    "id": "2412.17747v1",
+    "title": "Deliberation in Latent Space via Differentiable Cache Augmentation"
+  },
+  {
+    "id": "2411.06364v2",
+    "title": "EconoServe: Maximizing Multi-Resource Utilization with SLO Guarantees in   LLM Serving"
+  },
+  {
+    "id": "2412.18106v1",
+    "title": "Tackling the Dynamicity in a Production LLM Serving System with SOTA   Optimizations via Hybrid Prefill/Decode/Verify Scheduling on Efficient   Meta-kernels"
+  },
+  {
+    "id": "2507.18006v1",
+    "title": "Unlock the Potential of Fine-grained LLM Serving via Dynamic Module   Scaling"
+  },
+  {
+    "id": "2406.17565v3",
+    "title": "MemServe: Context Caching for Disaggregated LLM Serving with Elastic   Memory Pool"
+  },
+  {
+    "id": "2407.21118v2",
+    "title": "Palu: Compressing KV-Cache with Low-Rank Projection"
+  },
+  {
+    "id": "2411.04975v2",
+    "title": "SuffixDecoding: Extreme Speculative Decoding for Emerging AI   Applications"
+  },
+  {
+    "id": "2412.10382v1",
+    "title": "Many Hands Make Light Work: Accelerating Edge Inference via Multi-Client   Collaborative Caching"
+  },
+  {
+    "id": "2504.11816v1",
+    "title": "Cost-Efficient LLM Serving in the Cloud: VM Selection with KV Cache   Offloading"
+  },
+  {
+    "id": "2401.08294v1",
+    "title": "Inferflow: an Efficient and Highly Configurable Inference Engine for   Large Language Models"
+  },
+  {
+    "id": "2405.14430v3",
+    "title": "PipeFusion: Patch-level Pipeline Parallelism for Diffusion Transformers   Inference"
+  },
+  {
+    "id": "2502.13575v2",
+    "title": "ETS: Efficient Tree Search for Inference-Time Scaling"
+  },
+  {
+    "id": "2304.11267v2",
+    "title": "Speed Is All You Need: On-Device Acceleration of Large Diffusion Models   via GPU-Aware Optimizations"
+  },
+  {
+    "id": "2503.00979v2",
+    "title": "Dialogue Without Limits: Constant-Sized KV Caches for Extended Responses   in LLMs"
+  },
+  {
+    "id": "2403.09636v2",
+    "title": "Dynamic Memory Compression: Retrofitting LLMs for Accelerated Inference"
+  },
+  {
+    "id": "2504.15720v1",
+    "title": "SeaLLM: Service-Aware and Latency-Optimized Resource Sharing for Large   Language Model Inference"
+  },
+  {
+    "id": "2507.10069v1",
+    "title": "ElasticMM: Efficient Multimodal LLMs Serving with Elastic Multimodal   Parallelism"
+  },
+  {
+    "id": "2303.05016v1",
+    "title": "Performance Characterization of using Quantization for DNN Inference on   Edge Devices: Extended Version"
+  },
+  {
+    "id": "2505.13866v1",
+    "title": "Reasoning Path Compression: Compressing Generation Trajectories for   Efficient LLM Reasoning"
+  },
+  {
+    "id": "2504.02658v2",
+    "title": "MiLo: Efficient Quantized MoE Inference with Mixture of Low-Rank   Compensators"
+  },
+  {
+    "id": "2404.15778v2",
+    "title": "BASS: Batched Attention-optimized Speculative Sampling"
+  },
+  {
+    "id": "2411.11217v1",
+    "title": "MoE-Lightning: High-Throughput MoE Inference on Memory-constrained GPUs"
+  },
+  {
+    "id": "2403.08845v2",
+    "title": "Bifurcated Attention: Accelerating Massively Parallel Decoding with   Shared Prefixes in LLMs"
+  },
+  {
+    "id": "2407.21018v3",
+    "title": "ThinK: Thinner Key Cache by Query-Driven Pruning"
+  },
+  {
+    "id": "2502.00527v1",
+    "title": "PolarQuant: Leveraging Polar Transformation for Efficient Key Cache   Quantization and Decoding Acceleration"
+  },
+  {
+    "id": "2503.01483v1",
+    "title": "KurTail : Kurtosis-based LLM Quantization"
+  },
+  {
+    "id": "2508.00370v2",
+    "title": "EdgeInfinite-Instruct: Bridging SFT-Based Optimization and NPU-Level   Efficiency for Edge Devices"
+  },
+  {
+    "id": "2402.16775v2",
+    "title": "A Comprehensive Evaluation of Quantization Strategies for Large Language   Models"
+  },
+  {
+    "id": "2411.09510v2",
+    "title": "Communication Compression for Tensor Parallel LLM Inference"
+  },
+  {
+    "id": "2411.02886v2",
+    "title": "TokenSelect: Efficient Long-Context Inference and Length Extrapolation   for LLMs via Dynamic Token-Level KV Cache Selection"
+  },
+  {
+    "id": "2402.15678v2",
+    "title": "Minions: Accelerating Large Language Model Inference with Aggregated   Speculative Execution"
+  },
+  {
+    "id": "2308.09723v1",
+    "title": "FineQuant: Unlocking Efficiency with Fine-Grained Weight-Only   Quantization for LLMs"
+  },
+  {
+    "id": "2404.18322v2",
+    "title": "BlockLLM: Multi-tenant Finer-grained Serving for Large Language Models"
+  },
+  {
+    "id": "2412.12488v1",
+    "title": "A System for Microserving of LLMs"
+  },
+  {
+    "id": "2406.06858v5",
+    "title": "FLUX: Fast Software-based Communication Overlap On GPUs Through Kernel   Fusion"
+  },
+  {
+    "id": "2402.14808v3",
+    "title": "RelayAttention for Efficient Large Language Model Serving with Long   System Prompts"
+  },
+  {
+    "id": "2404.06954v1",
+    "title": "Accelerating Inference in Large Language Models with a Unified Layer   Skipping Strategy"
+  },
+  {
+    "id": "2503.10568v1",
+    "title": "Autoregressive Image Generation with Randomized Parallel Decoding"
+  },
+  {
+    "id": "2412.16187v3",
+    "title": "HashEvict: A Pre-Attention KV Cache Eviction Strategy using   Locality-Sensitive Hashing"
+  },
+  {
+    "id": "2410.01485v2",
+    "title": "A Little Goes a Long Way: Efficient Long Context Training and Inference   with Partial Contexts"
+  },
+  {
+    "id": "2505.15684v2",
+    "title": "ThinkLess: A Training-Free Inference-Efficient Method for Reducing   Reasoning Redundancy"
+  },
+  {
+    "id": "2412.20185v2",
+    "title": "DecDEC: A Systems Approach to Advancing Low-Bit LLM Quantization"
+  },
+  {
+    "id": "2402.05099v2",
+    "title": "Hydragen: High-Throughput LLM Inference with Shared Prefixes"
+  },
+  {
+    "id": "2411.07942v1",
+    "title": "Towards Low-bit Communication for Tensor Parallel LLM Inference"
+  },
+  {
+    "id": "2507.03153v1",
+    "title": "HGCA: Hybrid GPU-CPU Attention for Long Context LLM Inference"
+  },
+  {
+    "id": "2501.19392v4",
+    "title": "Cache Me If You Must: Adaptive Key-Value Quantization for Large Language   Models"
+  },
+  {
+    "id": "2505.21334v2",
+    "title": "HoliTom: Holistic Token Merging for Fast Video Large Language Models"
+  },
+  {
+    "id": "2504.15299v1",
+    "title": "D$^{2}$MoE: Dual Routing and Dynamic Scheduling for Efficient On-Device   MoE-based LLM Serving"
+  },
+  {
+    "id": "2504.14992v2",
+    "title": "Efficient Pretraining Length Scaling"
+  },
+  {
+    "id": "2502.10659v1",
+    "title": "Pushing up to the Limit of Memory Bandwidth and Capacity Utilization for   Efficient LLM Decoding on Embedded FPGA"
+  },
+  {
+    "id": "2502.15734v1",
+    "title": "Cache-Craft: Managing Chunk-Caches for Efficient Retrieval-Augmented   Generation"
+  },
+  {
+    "id": "2502.08910v1",
+    "title": "InfiniteHiP: Extending Language Model Context Up to 3 Million Tokens on   a Single GPU"
+  },
+  {
+    "id": "2503.11132v3",
+    "title": "X-EcoMLA: Upcycling Pre-Trained Attention into MLA for Efficient and   Extreme KV Compression"
+  },
+  {
+    "id": "2411.16102v1",
+    "title": "BlendServe: Optimizing Offline Inference for Auto-regressive Large   Models with Resource-aware Batching"
+  },
+  {
+    "id": "2406.17808v4",
+    "title": "Training-Free Exponential Context Extension via Cascading KV Cache"
+  },
+  {
+    "id": "2405.14371v1",
+    "title": "EdgeShard: Efficient LLM Inference via Collaborative Edge Computing"
+  },
+  {
+    "id": "2410.08391v1",
+    "title": "KV Prediction for Improved Time to First Token"
+  },
+  {
+    "id": "2505.15141v1",
+    "title": "BanditSpec: Adaptive Speculative Decoding via Bandit Algorithms"
+  },
+  {
+    "id": "2507.17125v1",
+    "title": "Model Compression Engine for Wearable Devices Skin Cancer Diagnosis"
+  },
+  {
+    "id": "2312.07104v2",
+    "title": "SGLang: Efficient Execution of Structured Language Model Programs"
+  },
+  {
+    "id": "2503.21817v3",
+    "title": "Skip-Vision: Efficient and Scalable Acceleration of Vision-Language   Models via Adaptive Token Skipping"
+  },
+  {
+    "id": "2503.05248v1",
+    "title": "Optimizing LLM Inference Throughput via Memory-aware and SLA-constrained   Dynamic Batching"
+  },
+  {
+    "id": "2411.05555v1",
+    "title": "AcceLLM: Accelerating LLM Inference using Redundancy for Load Balancing   and Data Locality"
+  },
+  {
+    "id": "2503.20552v1",
+    "title": "Injecting Adrenaline into LLM Serving: Boosting Resource Utilization and   Throughput via Attention Disaggregation"
+  },
+  {
+    "id": "2506.10848v2",
+    "title": "Accelerating Diffusion Large Language Models with SlowFast Sampling: The   Three Golden Principles"
+  },
+  {
+    "id": "2506.04708v1",
+    "title": "Accelerated Test-Time Scaling with Model-Free Speculative Sampling"
+  },
+  {
+    "id": "2507.01438v1",
+    "title": "EdgeLoRA: An Efficient Multi-Tenant LLM Serving System on Edge Devices"
+  },
+  {
+    "id": "2305.09781v4",
+    "title": "SpecInfer: Accelerating Generative Large Language Model Serving with   Tree-based Speculative Inference and Verification"
+  },
+  {
+    "id": "2506.17286v2",
+    "title": "GTA: Grouped-head latenT Attention"
+  },
+  {
+    "id": "2410.00428v3",
+    "title": "LayerKV: Optimizing Large Language Model Serving with Layer-wise KV   Cache Management"
+  },
+  {
+    "id": "2505.14085v1",
+    "title": "CE-LSLM: Efficient Large-Small Language Model Inference and   Communication via Cloud-Edge Collaboration"
+  },
+  {
+    "id": "2306.17266v1",
+    "title": "Subgraph Stationary Hardware-Software Inference Co-Design"
+  },
+  {
+    "id": "2503.11816v3",
+    "title": "Key, Value, Compress: A Systematic Exploration of KV Cache Compression   Techniques"
+  },
+  {
+    "id": "2405.12981v1",
+    "title": "Reducing Transformer Key-Value Cache Size with Cross-Layer Attention"
+  },
+  {
+    "id": "2503.02175v2",
+    "title": "DivPrune: Diversity-based Visual Token Pruning for Large Multimodal   Models"
+  },
+  {
+    "id": "2508.04462v1",
+    "title": "CARD: Cache-Assisted Parallel Speculative Decoding for Efficient Large   Language Model Inference"
+  },
+  {
+    "id": "2502.00085v1",
+    "title": "Efficient Beam Search for Large Language Models Using Trie-Based   Decoding"
+  },
+  {
+    "id": "2501.14205v1",
+    "title": "Serving Long-Context LLMs at the Mobile Edge: Test-Time Reinforcement   Learning-based Model Caching and Inference Offloading"
+  },
+  {
+    "id": "2306.14393v1",
+    "title": "Constraint-aware and Ranking-distilled Token Pruning for Efficient   Transformer Inference"
+  },
+  {
+    "id": "2505.20600v1",
+    "title": "InstGenIE: Generative Image Editing Made Efficient with Mask-aware   Caching and Scheduling"
+  },
+  {
+    "id": "2406.01566v2",
+    "title": "Helix: Serving Large Language Models over Heterogeneous GPUs and Network   via Max-Flow"
+  },
+  {
+    "id": "2508.03148v1",
+    "title": "Frontier: Simulating the Next Generation of LLM Inference Systems"
+  },
+  {
+    "id": "2411.17741v1",
+    "title": "Chameleon: Adaptive Caching and Scheduling for Many-Adapter LLM   Inference Environments"
+  },
+  {
+    "id": "2503.12988v1",
+    "title": "ROMA: a Read-Only-Memory-based Accelerator for QLoRA-based On-Device LLM"
+  },
+  {
+    "id": "2506.21593v1",
+    "title": "PentaRAG: Large-Scale Intelligent Knowledge Retrieval for Enterprise LLM   Applications"
+  },
+  {
+    "id": "2502.15294v3",
+    "title": "Round Attention: A Novel Round-Level Attention Mechanism to Accelerate   LLM Inference"
+  },
+  {
+    "id": "2411.03174v3",
+    "title": "ZipCache: A DRAM/SSD Cache with Built-in Transparent Compression"
+  },
+  {
+    "id": "2407.00079v3",
+    "title": "Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving"
+  },
+  {
+    "id": "2504.15475v1",
+    "title": "Speculative Sampling via Exponential Races"
+  },
+  {
+    "id": "2506.13166v1",
+    "title": "GreedyPrune: Retenting Critical Visual Token Set for Large Vision   Language Models"
+  },
+  {
+    "id": "2502.02040v1",
+    "title": "M2R2: Mixture of Multi-Rate Residuals for Efficient Transformer   Inference"
+  },
+  {
+    "id": "2505.16175v2",
+    "title": "QuickVideo: Real-Time Long Video Understanding with System Algorithm   Co-Design"
+  },
+  {
+    "id": "2311.04934v2",
+    "title": "Prompt Cache: Modular Attention Reuse for Low-Latency Inference"
+  },
+  {
+    "id": "2502.16002v3",
+    "title": "KVLink: Accelerating Large Language Models via Efficient KV Cache Reuse"
+  },
+  {
+    "id": "2402.02082v1",
+    "title": "GliDe with a CaPE: A Low-Hassle Method to Accelerate Speculative   Decoding"
+  },
+  {
+    "id": "2409.12490v2",
+    "title": "CritiPrefill: A Segment-wise Criticality-based Approach for Prefilling   Acceleration in LLMs"
+  },
+  {
+    "id": "2505.17331v2",
+    "title": "ECHO-LLaMA: Efficient Caching for High-Performance LLaMA Training"
+  },
+  {
+    "id": "2404.15420v3",
+    "title": "XC-Cache: Cross-Attending to Cached Context for Efficient LLM Inference"
+  },
+  {
+    "id": "2508.02215v1",
+    "title": "LeanK: Learnable K Cache Channel Pruning for Efficient Decoding"
+  },
+  {
+    "id": "2503.00491v1",
+    "title": "Tutorial Proposal: Speculative Decoding for Efficient LLM Inference"
+  },
+  {
+    "id": "2507.06517v1",
+    "title": "SpindleKV: A Novel KV Cache Reduction Method Balancing Both Shallow and   Deep Layers"
+  },
+  {
+    "id": "2403.20041v3",
+    "title": "Transformer-Lite: High-efficiency Deployment of Large Language Models on   Mobile Phone GPUs"
+  },
+  {
+    "id": "2508.08531v1",
+    "title": "Profiling Large Language Model Inference on Apple Silicon: A   Quantization Perspective"
+  },
+  {
+    "id": "2504.07347v2",
+    "title": "Throughput-Optimal Scheduling Algorithms for LLM Inference and AI Agents"
+  },
+  {
+    "id": "2410.15332v3",
+    "title": "EPIC: Efficient Position-Independent Caching for Serving Large Language   Models"
+  },
+  {
+    "id": "2410.05004v1",
+    "title": "Fast State Restoration in LLM Serving with HCache"
+  },
+  {
+    "id": "2401.15077v3",
+    "title": "EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty"
+  },
+  {
+    "id": "2407.00023v2",
+    "title": "Preble: Efficient Distributed Prompt Scheduling for LLM Serving"
+  },
+  {
+    "id": "2303.02284v1",
+    "title": "Fixed-point quantization aware training for on-device keyword-spotting"
+  },
+  {
+    "id": "2502.13502v2",
+    "title": "PLDR-LLMs Learn A Generalizable Tensor Operator That Can Replace Its Own   Deep Neural Net At Inference"
+  },
+  {
+    "id": "2501.17343v1",
+    "title": "Post-Training Quantization for 3D Medical Image Segmentation: A   Practical Study on Real Inference Engines"
+  },
+  {
+    "id": "2503.17707v1",
+    "title": "PipeBoost: Resilient Pipelined Architecture for Fast Serverless LLM   Scaling"
+  },
+  {
+    "id": "2304.11414v1",
+    "title": "Pipeline MoE: A Flexible MoE Implementation with Pipeline Parallelism"
+  },
+  {
+    "id": "2504.09345v1",
+    "title": "MoE-Lens: Towards the Hardware Limit of High-Throughput MoE LLM Serving   Under Resource Constraints"
+  },
+  {
+    "id": "2412.04757v1",
+    "title": "Ltri-LLM: Streaming Long Context Inference for LLMs with Training-Free   Dynamic Triangular Attention Pattern"
+  },
+  {
+    "id": "2405.19257v1",
+    "title": "Hybrid-Parallel: Achieving High Performance and Energy Efficient   Distributed Inference on Robots"
+  },
+  {
+    "id": "2502.06888v1",
+    "title": "Klotski: Efficient Mixture-of-Expert Inference via Expert-Aware   Multi-Batch Pipeline"
+  },
+  {
+    "id": "2406.09297v3",
+    "title": "MLKV: Multi-Layer Key-Value Heads for Memory Efficient Transformer   Decoding"
+  },
+  {
+    "id": "2404.06709v2",
+    "title": "CQIL: Inference Latency Optimization with Concurrent Computation of   Quasi-Independent Layers"
+  },
+  {
+    "id": "2506.07533v1",
+    "title": "MoQAE: Mixed-Precision Quantization for Long-Context LLM Inference via   Mixture of Quantization-Aware Experts"
+  },
+  {
+    "id": "2412.20677v2",
+    "title": "Align Attention Heads Before Merging Them: An Effective Way for   Converting MHA to GQA"
+  },
+  {
+    "id": "2503.15921v1",
+    "title": "SPIN: Accelerating Large Language Model Inference with Heterogeneous   Speculative Models"
+  },
+  {
+    "id": "2506.11329v1",
+    "title": "A4: Microarchitecture-Aware LLC Management for Datacenter Servers with   Emerging I/O Devices"
+  },
+  {
+    "id": "2502.02617v1",
+    "title": "PolarQuant: Quantizing KV Caches with Polar Transformation"
+  },
+  {
+    "id": "2408.04658v1",
+    "title": "Winning Amazon KDD Cup'24"
+  },
+  {
+    "id": "2412.09036v1",
+    "title": "ZigZagkv: Dynamic KV Cache Compression for Long-context Modeling based   on Layer Uncertainty"
+  },
+  {
+    "id": "2412.00876v4",
+    "title": "Dynamic-LLaVA: Efficient Multimodal Large Language Models via Dynamic   Vision-language Context Sparsification"
+  },
+  {
+    "id": "2502.16886v2",
+    "title": "DBudgetKV: Dynamic Budget in KV Cache Compression for Ensuring Optimal   Performance"
+  },
+  {
+    "id": "2405.07140v1",
+    "title": "Edge Intelligence Optimization for Large Language Model Inference with   Batching and Quantization"
+  },
+  {
+    "id": "2306.12830v1",
+    "title": "MultiTASC: A Multi-Tenancy-Aware Scheduler for Cascaded DNN Inference at   the Consumer Edge"
+  },
+  {
+    "id": "2503.07654v1",
+    "title": "MergeQuant: Accurate 4-bit Static Quantization of Large Language Models   by Channel-wise Calibration"
+  },
+  {
+    "id": "2406.10816v1",
+    "title": "Optimization of Armv9 architecture general large language model   inference performance based on Llama.cpp"
+  },
+  {
+    "id": "2410.03073v2",
+    "title": "LEGO: QEC Decoding System Architecture for Dynamic Circuits"
+  },
+  {
+    "id": "2502.00299v3",
+    "title": "ChunkKV: Semantic-Preserving KV Cache Compression for Efficient   Long-Context LLM Inference"
+  },
+  {
+    "id": "2505.02922v2",
+    "title": "RetroInfer: A Vector-Storage Approach for Scalable Long-Context LLM   Inference"
+  },
+  {
+    "id": "2312.12705v2",
+    "title": "Optimizing Distributed Training on Frontier for Large Language Models"
+  },
+  {
+    "id": "2409.09086v1",
+    "title": "Inf-MLLM: Efficient Streaming Inference of Multimodal Large Language   Models on a Single GPU"
+  },
+  {
+    "id": "2504.14611v1",
+    "title": "Joint Optimization of Offloading, Batching and DVFS for Multiuser   Co-Inference"
+  },
+  {
+    "id": "2305.17888v1",
+    "title": "LLM-QAT: Data-Free Quantization Aware Training for Large Language Models"
+  },
+  {
+    "id": "2505.21467v1",
+    "title": "Accelerating Diffusion Language Model Inference via Efficient KV Caching   and Guided Diffusion"
+  },
+  {
+    "id": "2508.08343v1",
+    "title": "Maximizing GPU Efficiency via Optimal Adapter Caching: An Analytical   Approach for Multi-Tenant LLM Serving"
+  },
+  {
+    "id": "2504.20828v2",
+    "title": "Ascendra: Dynamic Request Prioritization for Efficient LLM Serving"
+  },
+  {
+    "id": "2404.18911v1",
+    "title": "Kangaroo: Lossless Self-Speculative Decoding via Double Early Exiting"
+  },
+  {
+    "id": "2403.12981v1",
+    "title": "Beyond Inference: Performance Analysis of DNN Server Overheads for   Computer Vision"
+  },
+  {
+    "id": "2508.06133v1",
+    "title": "LLM Serving Optimization with Variable Prefill and Decode Lengths"
+  },
+  {
+    "id": "2503.14075v2",
+    "title": "Growing a Twig to Accelerate Large Vision-Language Models"
+  },
+  {
+    "id": "2502.12574v1",
+    "title": "HeadInfer: Memory-Efficient LLM Inference by Head-wise Offloading"
+  },
+  {
+    "id": "2504.00999v1",
+    "title": "MergeVQ: A Unified Framework for Visual Generation and Representation   with Disentangled Token Merging and Quantization"
+  },
+  {
+    "id": "2504.16266v2",
+    "title": "TeLLMe: An Energy-Efficient Ternary LLM Accelerator for Prefilling and   Decoding on Edge FPGAs"
+  },
+  {
+    "id": "2311.11514v3",
+    "title": "HexGen: Generative Inference of Large Language Model over Heterogeneous   Environment"
+  },
+  {
+    "id": "2305.12130v1",
+    "title": "Joint Foundation Model Caching and Inference of Generative AI Services   for Edge Intelligence"
+  },
+  {
+    "id": "2503.23367v3",
+    "title": "FastVAR: Linear Visual Autoregressive Modeling via Cached Token Pruning"
+  },
+  {
+    "id": "2505.14969v1",
+    "title": "STree: Speculative Tree Decoding for Hybrid State-Space Models"
+  },
+  {
+    "id": "2407.03583v1",
+    "title": "Loki: A System for Serving ML Inference Pipelines with Hardware and   Accuracy Scaling"
+  },
+  {
+    "id": "2310.09259v2",
+    "title": "QUIK: Towards End-to-End 4-Bit Inference on Generative Large Language   Models"
+  },
+  {
+    "id": "2310.01801v4",
+    "title": "Model Tells You What to Discard: Adaptive KV Cache Compression for LLMs"
+  },
+  {
+    "id": "2502.14837v1",
+    "title": "Towards Economical Inference: Enabling DeepSeek's Multi-Head Latent   Attention in Any Transformer-based LLMs"
+  },
+  {
+    "id": "2302.00732v2",
+    "title": "Protecting Cache States Against Both Speculative Execution Attacks and   Side-channel Attacks"
+  },
+  {
+    "id": "2409.16997v2",
+    "title": "INT-FlashAttention: Enabling Flash Attention for INT8 Quantization"
+  },
+  {
+    "id": "2507.20842v1",
+    "title": "METEOR: Multi-Encoder Collaborative Token Pruning for Efficient Vision   Language Models"
+  },
+  {
+    "id": "2504.00557v1",
+    "title": "Efficient LLaMA-3.2-Vision by Trimming Cross-attended Visual Features"
+  },
+  {
+    "id": "2312.04916v3",
+    "title": "EE-LLM: Large-Scale Training and Inference of Early-Exit Large Language   Models with 3D Parallelism"
+  },
+  {
+    "id": "2505.19602v1",
+    "title": "Memory-Efficient Visual Autoregressive Modeling with Scale-Aware KV   Cache Compression"
+  },
+  {
+    "id": "2505.17272v1",
+    "title": "Zebra-Llama: Towards Extremely Efficient Hybrid Models"
+  },
+  {
+    "id": "2508.01002v1",
+    "title": "Optimal Scheduling Algorithms for LLM Inference: Theory and Practice"
+  },
+  {
+    "id": "2505.21591v1",
+    "title": "Pioneering 4-Bit FP Quantization for Diffusion Models: Mixup-Sign   Quantization and Timestep-Aware Fine-Tuning"
+  },
+  {
+    "id": "2501.15113v1",
+    "title": "Task-KV: Task-aware KV Cache Optimization via Semantic Differentiation   of Attention Heads"
+  },
+  {
+    "id": "2506.04108v2",
+    "title": "Rectified Sparse Attention"
+  },
+  {
+    "id": "2406.11430v4",
+    "title": "A Simple and Effective $L_2$ Norm-Based Strategy for KV Cache   Compression"
+  },
+  {
+    "id": "2408.08437v1",
+    "title": "PQV-Mobile: A Combined Pruning and Quantization Toolkit to Optimize   Vision Transformers for Mobile Applications"
+  },
+  {
+    "id": "2504.13989v2",
+    "title": "Gradual Binary Search and Dimension Expansion : A general method for   activation quantization in LLMs"
+  },
+  {
+    "id": "2407.11041v4",
+    "title": "Integer-only Quantized Transformers for Embedded FPGA-based Time-series   Forecasting in AIoT"
+  },
+  {
+    "id": "2505.13544v2",
+    "title": "Multi-head Temporal Latent Attention"
+  },
+  {
+    "id": "2508.07871v1",
+    "title": "CATP: Contextually Adaptive Token Pruning for Efficient and Enhanced   Multimodal In-Context Learning"
+  },
+  {
+    "id": "2507.15428v1",
+    "title": "EgoPrune: Efficient Token Pruning for Egomotion Video Reasoning in   Embodied Agent"
+  },
+  {
+    "id": "2503.08467v1",
+    "title": "Accelerating MoE Model Inference with Expert Sharding"
+  },
+  {
+    "id": "2501.12689v2",
+    "title": "EchoLM: Accelerating LLM Serving with Real-time Knowledge Distillation"
+  },
+  {
+    "id": "2507.07400v1",
+    "title": "KVFlow: Efficient Prefix Caching for Accelerating LLM-Based Multi-Agent   Workflows"
+  },
+  {
+    "id": "2402.12374v3",
+    "title": "Sequoia: Scalable, Robust, and Hardware-aware Speculative Decoding"
+  },
+  {
+    "id": "2408.01050v1",
+    "title": "The Impact of Hyperparameters on Large Language Model Inference   Performance: An Evaluation of vLLM and HuggingFace Pipelines"
+  },
+  {
+    "id": "2504.07891v2",
+    "title": "SpecReason: Fast and Accurate Inference-Time Compute via Speculative   Reasoning"
+  },
+  {
+    "id": "2411.05007v3",
+    "title": "SVDQuant: Absorbing Outliers by Low-Rank Components for 4-Bit Diffusion   Models"
+  },
+  {
+    "id": "2405.20314v2",
+    "title": "S3D: A Simple and Cost-Effective Self-Speculative Decoding Scheme for   Low-Memory GPUs"
+  },
+  {
+    "id": "2502.11101v1",
+    "title": "CacheFocus: Dynamic Cache Re-Positioning for Efficient   Retrieval-Augmented Generation"
+  },
+  {
+    "id": "2507.06607v2",
+    "title": "Decoder-Hybrid-Decoder Architecture for Efficient Reasoning with Long   Generation"
+  },
+  {
+    "id": "2503.04973v1",
+    "title": "Beyond RAG: Task-Aware KV Cache Compression for Comprehensive Knowledge   Reasoning"
+  },
+  {
+    "id": "2506.08009v1",
+    "title": "Self Forcing: Bridging the Train-Test Gap in Autoregressive Video   Diffusion"
+  },
+  {
+    "id": "2412.16434v1",
+    "title": "SYMPHONY: Improving Memory Management for LLM Inference Workloads"
+  },
+  {
+    "id": "2502.15197v2",
+    "title": "TETRIS: Optimal Draft Token Selection for Batch Speculative Decoding"
+  },
+  {
+    "id": "2502.08182v1",
+    "title": "Memory Offloading for Large Language Model Inference with Latency SLO   Guarantees"
+  },
+  {
+    "id": "2310.18813v1",
+    "title": "The Synergy of Speculative Decoding and Batching in Serving Large   Language Models"
+  },
+  {
+    "id": "2412.01818v2",
+    "title": "Beyond Text-Visual Attention: Exploiting Visual Cues for Effective Token   Pruning in VLMs"
+  },
+  {
+    "id": "2506.10967v2",
+    "title": "Beyond Attention or Similarity: Maximizing Conditional Diversity for   Token Pruning in MLLMs"
+  },
+  {
+    "id": "2310.12072v2",
+    "title": "SPEED: Speculative Pipelined Execution for Efficient Decoding"
+  },
+  {
+    "id": "2506.05345v1",
+    "title": "Inference-Time Hyper-Scaling with KV Cache Compression"
+  },
+  {
+    "id": "2503.02969v2",
+    "title": "InfiniSST: Simultaneous Translation of Unbounded Speech with Large   Language Model"
+  },
+  {
+    "id": "2505.12065v1",
+    "title": "Demystifying and Enhancing the Efficiency of Large Language Model Based   Search Agents"
+  },
+  {
+    "id": "2412.06161v1",
+    "title": "Harpagon: Minimizing DNN Serving Cost via Efficient Dispatching,   Scheduling and Splitting"
+  },
+  {
+    "id": "2410.23079v1",
+    "title": "BUZZ: Beehive-structured Sparse KV Cache with Segmented Heavy Hitters   for Efficient LLM Inference"
+  },
+  {
+    "id": "2506.17121v1",
+    "title": "Cache Me If You Can: How Many KVs Do You Need for Effective Long-Context   LMs?"
+  },
+  {
+    "id": "2410.12876v3",
+    "title": "In-context KV-Cache Eviction for LLMs via Attention-Gate"
+  },
+  {
+    "id": "2502.03805v1",
+    "title": "Identify Critical KV Cache in LLM Inference from an Output Perturbation   Perspective"
+  },
+  {
+    "id": "2402.04925v1",
+    "title": "TP-Aware Dequantization"
+  },
+  {
+    "id": "2412.14838v4",
+    "title": "DynamicKV: Task-Aware Adaptive KV Cache Compression for Long Context   LLMs"
+  },
+  {
+    "id": "2503.18893v1",
+    "title": "xKV: Cross-Layer SVD for KV-Cache Compression"
+  },
+  {
+    "id": "2508.02558v1",
+    "title": "Sparse-dLLM: Accelerating Diffusion LLMs with Dynamic Cache Eviction"
+  },
+  {
+    "id": "2409.13761v2",
+    "title": "Do Large Language Models Need a Content Delivery Network?"
+  },
+  {
+    "id": "2405.18628v2",
+    "title": "Hardware-Aware Parallel Prompt Decoding for Memory-Efficient   Acceleration of LLM Inference"
+  },
+  {
+    "id": "2410.21035v2",
+    "title": "Beyond Autoregression: Fast LLMs via Self-Distillation Through Time"
+  },
+  {
+    "id": "2507.20613v1",
+    "title": "Enhancing Large Multimodal Models with Adaptive Sparsity and KV Cache   Compression"
+  },
+  {
+    "id": "2404.08567v1",
+    "title": "CATP: Cross-Attention Token Pruning for Accuracy Preserved Multimodal   Model Inference"
+  },
+  {
+    "id": "2506.05344v2",
+    "title": "SparseMM: Head Sparsity Emerges from Visual Concept Responses in MLLMs"
+  },
+  {
+    "id": "2306.02272v4",
+    "title": "OWQ: Outlier-Aware Weight Quantization for Efficient Fine-Tuning and   Inference of Large Language Models"
+  },
+  {
+    "id": "2501.09367v1",
+    "title": "PICE: A Semantic-Driven Progressive Inference System for LLM Serving in   Cloud-Edge Networks"
+  },
+  {
+    "id": "2306.04235v1",
+    "title": "MobileNMT: Enabling Translation in 15MB and 30ms"
+  },
+  {
+    "id": "2305.17328v3",
+    "title": "Zero-TPrune: Zero-Shot Token Pruning through Leveraging of the Attention   Graph in Pre-Trained Transformers"
+  },
+  {
+    "id": "2311.08263v2",
+    "title": "Fast Chain-of-Thought: A Glance of Future from Parallel Decoding Leads   to Answers Faster"
+  },
+  {
+    "id": "2404.15949v2",
+    "title": "CORM: Cache Optimization with Recent Message for Large Language Model   Inference"
+  },
+  {
+    "id": "2506.07416v1",
+    "title": "LiteVLM: A Low-Latency Vision-Language Model Inference Pipeline for   Resource-Constrained Environments"
+  },
+  {
+    "id": "2402.12065v2",
+    "title": "WKVQuant: Quantizing Weight and Key/Value Cache for Large Language   Models Gains More"
+  },
+  {
+    "id": "2502.13965v1",
+    "title": "Autellix: An Efficient Serving Engine for LLM Agents as General Programs"
+  },
+  {
+    "id": "2506.05806v1",
+    "title": "LLIA -- Enabling Low-Latency Interactive Avatars: Real-Time Audio-Driven   Portrait Video Generation with Diffusion Models"
+  },
+  {
+    "id": "2410.05265v2",
+    "title": "PrefixQuant: Eliminating Outliers by Prefixed Tokens for Large Language   Models Quantization"
+  },
+  {
+    "id": "2312.17279v3",
+    "title": "Stateful Conformer with Cache-based Inference for Streaming Automatic   Speech Recognition"
+  },
+  {
+    "id": "2505.02380v3",
+    "title": "EntroLLM: Entropy Encoded Weight Compression for Efficient Large   Language Model Inference on Edge Devices"
+  },
+  {
+    "id": "2502.00937v2",
+    "title": "ModServe: Scalable and Resource-Efficient Large Multimodal Model Serving"
+  },
+  {
+    "id": "2309.05276v1",
+    "title": "Beamforming in Wireless Coded-Caching Systems"
+  },
+  {
+    "id": "2412.04652v1",
+    "title": "Cross-Self KV Cache Pruning for Efficient Vision-Language Inference"
+  },
+  {
+    "id": "2502.01277v1",
+    "title": "OCTOPINF: Workload-Aware Inference Serving for Edge Video Analytics"
+  },
+  {
+    "id": "2305.01516v3",
+    "title": "From FASTER to F2: Evolving Concurrent Key-Value Store Designs for Large   Skewed Workloads"
+  },
+  {
+    "id": "2401.03868v2",
+    "title": "FlightLLM: Efficient Large Language Model Inference with a Complete   Mapping Flow on FPGAs"
+  },
+  {
+    "id": "2507.08045v1",
+    "title": "Krul: Efficient State Restoration for Multi-turn Conversations with   Dynamic Cross-layer KV Sharing"
+  },
+  {
+    "id": "2406.09904v3",
+    "title": "QQQ: Quality Quattuor-Bit Quantization for Large Language Models"
+  },
+  {
+    "id": "2506.09554v2",
+    "title": "Understanding the Performance and Power of LLM Inferencing on Edge   Accelerators"
+  },
+  {
+    "id": "2504.07479v1",
+    "title": "UniCAIM: A Unified CAM/CIM Architecture with Static-Dynamic KV Cache   Pruning for Efficient Long-Context LLM Inference"
+  },
+  {
+    "id": "2507.12000v2",
+    "title": "DSSD: Efficient Edge-Device LLM Deployment and Collaborative Inference   via Distributed Split Speculative Decoding"
+  },
+  {
+    "id": "2506.05413v2",
+    "title": "SmoothRot: Combining Channel-Wise Scaling and Rotation for   Quantization-Friendly LLMs"
+  },
+  {
+    "id": "2501.06709v1",
+    "title": "Mell: Memory-Efficient Large Language Model Serving via Multi-GPU KV   Cache Management"
+  },
+  {
+    "id": "2508.08192v1",
+    "title": "Efficient Speculative Decoding for Llama at Scale: Challenges and   Solutions"
+  },
+  {
+    "id": "2409.11057v1",
+    "title": "KVPruner: Structural Pruning for Faster and Memory-Efficient Large   Language Models"
+  },
+  {
+    "id": "2506.18952v1",
+    "title": "LLMs on a Budget? Say HOLA"
+  },
+  {
+    "id": "2408.11743v1",
+    "title": "MARLIN: Mixed-Precision Auto-Regressive Parallel Inference on Large   Language Models"
+  },
+  {
+    "id": "2407.03637v4",
+    "title": "QET: Enhancing Quantized LLM Parameters and KV cache Compression through   Element Substitution and Residual Clustering"
+  },
+  {
+    "id": "2311.18174v1",
+    "title": "Packrat: Automatic Reconfiguration for Latency Minimization in CPU-based   DNN Serving"
+  },
+  {
+    "id": "2502.05370v1",
+    "title": "fMoE: Fine-Grained Expert Offloading for Large Mixture-of-Experts   Serving"
+  },
+  {
+    "id": "2501.14312v1",
+    "title": "Locality-aware Fair Scheduling in LLM Serving"
+  },
+  {
+    "id": "2505.19634v3",
+    "title": "Faster and Better LLMs via Latency-Aware Test-Time Scaling"
+  },
+  {
+    "id": "2505.20316v1",
+    "title": "Reinforcement Speculative Decoding for Fast Ranking"
+  },
+  {
+    "id": "2411.06084v1",
+    "title": "Optimizing Large Language Models through Quantization: A Comparative   Analysis of PTQ and QAT Techniques"
+  },
+  {
+    "id": "2410.20046v1",
+    "title": "DQRM: Deep Quantized Recommendation Models"
+  },
+  {
+    "id": "2503.00784v1",
+    "title": "DuoDecoding: Hardware-aware Heterogeneous Speculative Decoding with   Dynamic Multi-Sequence Drafting"
+  },
+  {
+    "id": "2408.08146v1",
+    "title": "KOALA: Enhancing Speculative Decoding for LLM via Multi-Layer Draft   Heads with Adversarial Learning"
+  },
+  {
+    "id": "2307.03712v1",
+    "title": "INT-FP-QSim: Mixed Precision and Formats For Large Language Models and   Vision Transformers"
+  },
+  {
+    "id": "2309.01945v5",
+    "title": "On-Chip Hardware-Aware Quantization for Mixed Precision Neural Networks"
+  },
+  {
+    "id": "2409.15012v1",
+    "title": "Inference-Friendly Models With MixAttention"
+  },
+  {
+    "id": "2508.07227v1",
+    "title": "LP-Spec: Leveraging LPDDR PIM for Efficient LLM Mobile Speculative   Inference with Architecture-Dataflow Co-Optimization"
+  },
+  {
+    "id": "2402.05109v2",
+    "title": "Hydra: Sequentially-Dependent Draft Heads for Medusa Decoding"
+  },
+  {
+    "id": "2406.05317v2",
+    "title": "LoCoCo: Dropping In Convolutions for Long Context Compression"
+  },
+  {
+    "id": "2412.03409v3",
+    "title": "PrefixKV: Adaptive Prefix KV Cache is What Vision Instruction-Following   Models Need for Efficient Generation"
+  },
+  {
+    "id": "2312.05385v2",
+    "title": "Apparate: Rethinking Early Exits to Tame Latency-Throughput Tensions in   ML Serving"
+  },
+  {
+    "id": "2506.10851v1",
+    "title": "Energy-Efficient Deep Learning for Traffic Classification on   Microcontrollers"
+  },
+  {
+    "id": "2507.00418v1",
+    "title": "Serving LLMs in HPC Clusters: A Comparative Study of Qualcomm Cloud AI   100 Ultra and High-Performance GPUs"
+  },
+  {
+    "id": "2505.00980v1",
+    "title": "LMDepth: Lightweight Mamba-based Monocular Depth Estimation for   Real-World Deployment"
+  },
+  {
+    "id": "2412.02252v2",
+    "title": "Compressing KV Cache for Long-Context LLM Inference with Inter-Layer   Attention Similarity"
+  },
+  {
+    "id": "2310.07177v4",
+    "title": "Online Speculative Decoding"
+  },
+  {
+    "id": "2407.18003v4",
+    "title": "Keep the Cost Down: A Review on Methods to Optimize LLM' s KV-Cache   Consumption"
+  },
+  {
+    "id": "2407.11534v2",
+    "title": "LRQ: Optimizing Post-Training Quantization for Large Language Models by   Learning Low-Rank Weight-Scaling Matrices"
+  },
+  {
+    "id": "2504.04823v1",
+    "title": "Quantization Hurts Reasoning? An Empirical Study on Quantized Reasoning   Models"
+  },
+  {
+    "id": "2412.18934v1",
+    "title": "Dovetail: A CPU/GPU Heterogeneous Speculative Decoding for LLM inference"
+  },
+  {
+    "id": "2301.10904v3",
+    "title": "GPU-based Private Information Retrieval for On-Device Machine Learning   Inference"
+  },
+  {
+    "id": "2410.17954v1",
+    "title": "ExpertFlow: Optimized Expert Activation and Token Allocation for   Efficient Mixture-of-Experts Inference"
+  },
+  {
+    "id": "2302.11750v1",
+    "title": "Hera: A Heterogeneity-Aware Multi-Tenant Inference Server for   Personalized Recommendations"
+  },
+  {
+    "id": "2505.21594v1",
+    "title": "Fast and Cost-effective Speculative Edge-Cloud Decoding with Early Exits"
+  },
+  {
+    "id": "2410.03804v2",
+    "title": "Mixture of Attentions For Speculative Decoding"
+  },
+  {
+    "id": "2506.21901v1",
+    "title": "A Survey of LLM Inference Systems"
+  },
+  {
+    "id": "2404.14897v1",
+    "title": "Beyond the Speculative Game: A Survey of Speculative Execution in Large   Language Models"
+  },
+  {
+    "id": "2505.02533v1",
+    "title": "Large Language Model Partitioning for Low-Latency Inference at the Edge"
+  },
+  {
+    "id": "2404.08856v1",
+    "title": "On Speculative Decoding for Multimodal Large Language Models"
+  },
+  {
+    "id": "2501.09253v1",
+    "title": "PATCHEDSERVE: A Patch Management Framework for SLO-Optimized Hybrid   Resolution Diffusion Serving"
+  },
+  {
+    "id": "2410.12247v2",
+    "title": "EPS-MoE: Expert Pipeline Scheduler for Cost-Efficient MoE Inference"
+  },
+  {
+    "id": "2508.06084v1",
+    "title": "AdaptInfer: Adaptive Token Pruning for Vision-Language Model Inference   with Dynamical Text Guidance"
+  },
+  {
+    "id": "2311.04996v1",
+    "title": "GPU-Accelerated WFST Beam Search Decoder for CTC-based Speech   Recognition"
+  },
+  {
+    "id": "2504.14966v2",
+    "title": "SLO-Aware Scheduling for Large Language Model Inferences"
+  },
+  {
+    "id": "2503.05330v1",
+    "title": "Speculative Decoding for Multi-Sample Inference"
+  },
+  {
+    "id": "2506.20657v1",
+    "title": "SuperSONIC: Cloud-Native Infrastructure for ML Inferencing"
+  },
+  {
+    "id": "2309.13335v2",
+    "title": "Model-enhanced Vector Index"
+  },
+  {
+    "id": "2502.15737v1",
+    "title": "A Performance Analysis of You Only Look Once Models for Deployment on   Constrained Computational Edge Devices in Drone Applications"
+  },
+  {
+    "id": "2503.02236v2",
+    "title": "VQ-LLM: High-performance Code Generation for Vector Quantization   Augmented LLM Inference"
+  },
+  {
+    "id": "2312.11488v2",
+    "title": "Keep Your Friends Close: Leveraging Affinity Groups to Accelerate AI   Inference Workflows"
+  },
+  {
+    "id": "2506.00384v1",
+    "title": "Deep-Learning-Driven Prefetching for Far Memory"
+  },
+  {
+    "id": "2503.02550v3",
+    "title": "SpecInF: Exploiting Idle GPU Resources in Distributed DL Training via   Speculative Inference Filling"
+  },
+  {
+    "id": "2503.06545v1",
+    "title": "QuantCache: Adaptive Importance-Guided Quantization with Hierarchical   Latent and Layer Caching for Video Generation"
+  },
+  {
+    "id": "2303.05378v1",
+    "title": "Greener yet Powerful: Taming Large Code Generation Models with   Quantization"
+  },
+  {
+    "id": "2402.06082v1",
+    "title": "SubGen: Token Generation in Sublinear Time and Memory"
+  },
+  {
+    "id": "2505.07858v1",
+    "title": "Scaling Laws for Speculative Decoding"
+  },
+  {
+    "id": "2411.10650v1",
+    "title": "Deep Learning-Based Image Compression for Wireless Communications:   Impacts on Reliability,Throughput, and Latency"
+  },
+  {
+    "id": "2405.19715v3",
+    "title": "SpecDec++: Boosting Speculative Decoding via Adaptive Candidate Lengths"
+  },
+  {
+    "id": "2507.02659v2",
+    "title": "OmniDraft: A Cross-vocabulary, Online Adaptive Drafter for On-device   Speculative Decoding"
+  },
+  {
+    "id": "2502.15075v2",
+    "title": "Quantize What Counts: Bit Allocation Insights Informed by Spectral Gaps   in Keys and Values"
+  },
+  {
+    "id": "2410.09531v1",
+    "title": "PrivQuant: Communication-Efficient Private Inference with Quantized   Network/Protocol Co-Optimization"
+  },
+  {
+    "id": "2506.10463v1",
+    "title": "Starting Positions Matter: A Study on Better Weight Initialization for   Neural Network Quantization"
+  },
+  {
+    "id": "2304.13541v1",
+    "title": "D-STACK: High Throughput DNN Inference by Effective Multiplexing and   Spatio-Temporal Scheduling of GPUs"
+  },
+  {
+    "id": "2408.07092v2",
+    "title": "Post-Training Sparse Attention with Double Sparsity"
+  },
+  {
+    "id": "2501.06425v4",
+    "title": "Tensor Product Attention Is All You Need"
+  },
+  {
+    "id": "2403.05826v2",
+    "title": "Cached Model-as-a-Resource: Provisioning Large Language Model Agents for   Edge Intelligence in Space-air-ground Integrated Networks"
+  },
+  {
+    "id": "2506.15969v1",
+    "title": "LazyEviction: Lagged KV Eviction with Attention Pattern Observation for   Efficient Long Reasoning"
+  },
+  {
+    "id": "2507.20984v2",
+    "title": "SmallThinker: A Family of Efficient Large Language Models Natively   Trained for Local Deployment"
+  },
+  {
+    "id": "2505.16335v1",
+    "title": "FPQVAR: Floating Point Quantization for Visual Autoregressive Model with   FPGA Hardware Co-design"
+  },
+  {
+    "id": "2505.05950v2",
+    "title": "FloE: On-the-Fly MoE Inference on Memory-constrained GPU"
+  },
+  {
+    "id": "2505.21259v1",
+    "title": "Stochastic Geometry-Based Performance Evaluation for LEO   Satellite-Assisted Space Caching"
+  },
+  {
+    "id": "2412.01447v1",
+    "title": "PLD+: Accelerating LLM inference by leveraging Language Model Artifacts"
+  },
+  {
+    "id": "2408.06995v1",
+    "title": "Low-Bitwidth Floating Point Quantization for Efficient High-Quality   Diffusion Models"
+  },
+  {
+    "id": "2309.16354v2",
+    "title": "Transformer-VQ: Linear-Time Transformers via Vector Quantization"
+  },
+  {
+    "id": "2505.07239v1",
+    "title": "Comet: Accelerating Private Inference for Large Language Model by   Predicting Activation Sparsity"
+  },
+  {
+    "id": "2409.14017v1",
+    "title": "SPEED: A Scalable RISC-V Vector Processor Enabling Efficient   Multi-Precision DNN Inference"
+  },
+  {
+    "id": "2410.01228v1",
+    "title": "ConServe: Harvesting GPUs for Low-Latency and High-Throughput Large   Language Model Serving"
+  },
+  {
+    "id": "2411.19114v1",
+    "title": "PREBA: A Hardware/Software Co-Design for Multi-Instance GPU based AI   Inference Servers"
+  },
+  {
+    "id": "2412.08890v1",
+    "title": "Lexico: Extreme KV Cache Compression via Sparse Coding over Universal   Dictionaries"
+  },
+  {
+    "id": "2505.10259v3",
+    "title": "SpecOffload: Unlocking Latent GPU Capacity for LLM Inference on   Resource-Constrained Devices"
+  },
+  {
+    "id": "2503.10017v1",
+    "title": "Speedy MASt3R"
+  },
+  {
+    "id": "2507.14204v1",
+    "title": "LaCache: Ladder-Shaped KV Caching for Efficient Long-Context Modeling of   Large Language Models"
+  },
+  {
+    "id": "2507.10524v2",
+    "title": "Mixture-of-Recursions: Learning Dynamic Recursive Depths for Adaptive   Token-Level Computation"
+  },
+  {
+    "id": "2412.07836v2",
+    "title": "Machine learning-driven conservative-to-primitive conversion in hybrid   piecewise polytropic and tabulated equations of state"
+  },
+  {
+    "id": "2405.02687v1",
+    "title": "Placement Delivery Arrays for Coded Caching with Shared and Private   Caches"
+  },
+  {
+    "id": "2508.00553v2",
+    "title": "HiPrune: Training-Free Visual Token Pruning via Hierarchical Attention   in Vision-Language Models"
+  },
+  {
+    "id": "2403.01136v1",
+    "title": "LLM-PQ: Serving LLM on Heterogeneous Clusters with Phase-Aware Partition   and Adaptive Quantization"
+  },
+  {
+    "id": "2505.24179v1",
+    "title": "SALE : Low-bit Estimation for Efficient Sparse Attention in Long-context   LLM Prefilling"
+  },
+  {
+    "id": "2305.14314v1",
+    "title": "QLoRA: Efficient Finetuning of Quantized LLMs"
+  },
+  {
+    "id": "2506.11108v1",
+    "title": "History-Aware Cross-Attention Reinforcement: Self-Supervised Multi Turn   and Chain-of-Thought Fine-Tuning with vLLM"
+  },
+  {
+    "id": "2408.08490v1",
+    "title": "Accelerating Mini-batch HGNN Training by Reducing CUDA Kernels"
+  },
+  {
+    "id": "2506.17615v1",
+    "title": "EQuARX: Efficient Quantized AllReduce in XLA for Distributed Machine   Learning Acceleration"
+  },
+  {
+    "id": "2312.11918v1",
+    "title": "A Case Study in CUDA Kernel Fusion: Implementing FlashAttention-2 on   NVIDIA Hopper Architecture using the CUTLASS Library"
+  },
+  {
+    "id": "2410.18038v2",
+    "title": "POD-Attention: Unlocking Full Prefill-Decode Overlap for Faster LLM   Inference"
+  },
+  {
+    "id": "2407.17678v7",
+    "title": "S2-Attention: Hardware-Aware Context Sharding Among Attention Heads"
+  },
+  {
+    "id": "2502.01941v2",
+    "title": "Can LLMs Maintain Fundamental Abilities under KV Cache Compression?"
+  },
+  {
+    "id": "2503.16709v1",
+    "title": "QuartDepth: Post-Training Quantization for Real-Time Depth Estimation on   the Edge"
+  },
+  {
+    "id": "2410.17043v1",
+    "title": "Optimizing Mixture-of-Experts Inference Time Combining Model Deployment   and Communication Scheduling"
+  },
+  {
+    "id": "2502.11494v2",
+    "title": "Stop Looking for Important Tokens in Multimodal Language Models:   Duplication Matters More"
+  },
+  {
+    "id": "2505.00025v2",
+    "title": "A Method for the Architecture of a Medical Vertical Large Language Model   Based on Deepseek R1"
+  },
+  {
+    "id": "2501.04987v3",
+    "title": "TreeKV: Smooth Key-Value Cache Compression with Tree Structures"
+  },
+  {
+    "id": "2306.00978v5",
+    "title": "AWQ: Activation-aware Weight Quantization for LLM Compression and   Acceleration"
+  },
+  {
+    "id": "2402.13533v1",
+    "title": "FinGPT-HPC: Efficient Pretraining and Finetuning Large Language Models   for Financial Applications with High-Performance Computing"
+  },
+  {
+    "id": "2403.12422v2",
+    "title": "Jetfire: Efficient and Accurate Transformer Pretraining with INT8 Data   Flow and Per-Block Quantization"
+  },
+  {
+    "id": "2402.10076v1",
+    "title": "QUICK: Quantization-aware Interleaving and Conflict-free Kernel for   efficient LLM inference"
+  },
+  {
+    "id": "2503.02812v1",
+    "title": "Q-Filters: Leveraging QK Geometry for Efficient KV Cache Compression"
+  },
+  {
+    "id": "2411.14458v1",
+    "title": "Improving training time and GPU utilization in geo-distributed language   model training"
+  },
+  {
+    "id": "2504.02263",
+    "title": "MegaScale-Infer: Serving Mixture-of-Experts at Scale with Disaggregated Expert Parallelism"
+  }
+]

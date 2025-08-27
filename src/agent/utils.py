@@ -227,15 +227,35 @@ def search_papers_by_ids(id_list: List[str]) -> List[Dict[str, Any]]:
     ids = [i.strip() for i in (id_list or []) if i and i.strip()]
     if not ids:
         return []
+    
+    # Clean ArXiv IDs: remove version numbers (e.g., "2504.12526v1" -> "2504.12526")
+    cleaned_ids = []
+    for arxiv_id in ids:
+        # Remove version suffix (vN) if present
+        clean_id = re.sub(r'v\d+$', '', arxiv_id)
+        cleaned_ids.append(clean_id)
+    
+    logger.info(f"Cleaned {len(ids)} ArXiv IDs (removed version numbers)")
+    
     # arXiv suggests batching (commonly <= 50 per call)
     batch_size = 50
     results: List[Dict[str, Any]] = []
-    for i in range(0, len(ids), batch_size):
-        batch = ids[i:i + batch_size]
+    for i in range(0, len(cleaned_ids), batch_size):
+        batch = cleaned_ids[i:i + batch_size]
         params = {"id_list": ",".join(batch)}
-        resp = requests.get(ARXIV_QUERY_API, params=params, headers=HTTP_HEADERS, timeout=30)
-        resp.raise_for_status()
-        results.extend(parse_arxiv_atom(resp.text))
+        logger.info(f"Fetching ArXiv batch {i//batch_size + 1}: {len(batch)} papers")
+        
+        try:
+            resp = requests.get(ARXIV_QUERY_API, params=params, headers=HTTP_HEADERS, timeout=30)
+            resp.raise_for_status()
+            batch_results = parse_arxiv_atom(resp.text)
+            results.extend(batch_results)
+            logger.info(f"ArXiv batch {i//batch_size + 1} returned {len(batch_results)} papers")
+        except Exception as e:
+            logger.error(f"Error fetching ArXiv batch {i//batch_size + 1}: {str(e)}")
+            continue
+    
+    logger.info(f"Total ArXiv papers fetched: {len(results)} out of {len(cleaned_ids)} requested")
     return results
 
 def iso_to_date(iso_str: Optional[str]) -> Optional[str]:
@@ -1163,16 +1183,17 @@ async def create_schema_if_not_exists(cur) -> None:
         """
     )
 
-# ---------------------- Tavily web search utilities ----------------------
+# ---------------------- Tavily web search utilities (DISABLED) ----------------------
 
+# TEMPORARILY DISABLED - Tavily functionality commented out
 # Global variables for API key rotation
-_TAVILY_API_KEYS = [
-    "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",
-    "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", 
-    "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"
-]
-_CURRENT_TAVILY_KEY_INDEX = 0
-_TAVILY_CLIENT_CACHE = {}
+# _TAVILY_API_KEYS = [
+#     "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",
+#     "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", 
+#     "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"
+# ]
+# _CURRENT_TAVILY_KEY_INDEX = 0
+# _TAVILY_CLIENT_CACHE = {}
 
 # API Rate Limiting Variables
 _LAST_TAVILY_REQUEST_TIME = 0.0
@@ -1262,10 +1283,15 @@ def is_quota_exceeded_error(error_msg: str) -> bool:
     return any(indicator in error_lower for indicator in quota_indicators)
 
 def get_tavily_client() -> Optional[object]:
-    """Get Tavily client instance with API key rotation support."""
-    if not TAVILY_AVAILABLE:
-        logger.warning("Tavily client not available. Please install: pip install tavily-python")
-        return None
+    """Get Tavily client instance - TEMPORARILY DISABLED."""
+    # TEMPORARILY DISABLED - Always return None
+    logger.info("[TAVILY] DISABLED - Client creation skipped")
+    return None
+    
+    # Original code commented out:
+    # if not TAVILY_AVAILABLE:
+    #     logger.warning("Tavily client not available. Please install: pip install tavily-python")
+    #     return None
     
     api_key = get_next_tavily_api_key()
     if not api_key:
@@ -1285,18 +1311,23 @@ def get_tavily_client() -> Optional[object]:
         return None
 
 async def search_person_role_with_tavily(name: str, affiliation: str) -> Optional[Dict[str, Any]]:
-    """Search for person's role information using Tavily web search with API key rotation and rate limiting.
+    """Search for person's role information using Tavily web search - TEMPORARILY DISABLED.
     
     Args:
         name: Person's full name
-        affiliation: Institution/organization name
+        affiliation: Person's institutional affiliation
         
     Returns:
         Dict with search results and extracted role information, or None if failed
     """
-    if not name or not affiliation:
-        logger.warning("Name and affiliation are required for Tavily search")
-        return None
+    # TEMPORARILY DISABLED - Return None to skip Tavily processing
+    logger.info(f"[TAVILY] DISABLED - Skipping role search for {name} at {affiliation}")
+    return None
+    
+    # Original code commented out:
+    # if not name or not affiliation:
+    #     logger.warning("Name and affiliation are required for Tavily search")
+    #     return None
     
     query = f"What is {name}'s role position job title at {affiliation}?"
     logger.info(f"Tavily searching: {query}")
@@ -1375,6 +1406,13 @@ async def search_person_role_with_tavily(name: str, affiliation: str) -> Optiona
     }
 
 async def search_person_general_with_tavily(name: str, affiliation: str, search_prompt: str) -> Optional[Dict[str, Any]]:
+    """General Tavily search - TEMPORARILY DISABLED."""
+    # TEMPORARILY DISABLED - Return None to skip Tavily processing
+    logger.info(f"[TAVILY] DISABLED - Skipping general search for {name}")
+    return None
+    
+    # Original function commented out below:
+    #
     """General Tavily web search for person information with custom prompt, API key rotation, and rate limiting.
     
     Args:

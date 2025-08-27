@@ -547,9 +547,17 @@ async def search_person_role(
 
 
 @router.get("/export-authors")
-async def export_authors() -> Dict[str, Any]:
-    """Export all authors data with their affiliations and roles in JSON format."""
+async def export_authors(format: str = Query("json", description="Export format: json or csv")) -> Dict[str, Any]:
+    """Export all authors data with their affiliations, roles, and recent papers.
+    
+    Args:
+        format: Export format (json or csv)
+    """
     try:
+        from fastapi.responses import StreamingResponse
+        import csv
+        import io
+        
         # Get all authors
         authors = supabase_client.select(
             table="authors",
@@ -595,6 +603,77 @@ async def export_authors() -> Dict[str, Any]:
                             "role": role or "Unknown"
                         })
             
+            # Get author's recent papers
+            recent_papers = []
+            paper_links = supabase_client.select(
+                "author_paper",
+                filters={"author_id": author_id},
+                columns="paper_id",
+                limit=10  # Limit to recent 10 papers
+            ) or []
+            
+            if paper_links:
+                paper_ids = [link.get("paper_id") for link in paper_links if link.get("paper_id")]
+                if paper_ids:
+                    papers = supabase_client.select_in(
+                        "papers",
+                        "id",
+                        paper_ids,
+                        columns="id, paper_title, published, arxiv_entry"
+                    ) or []
+                    
+                    # Sort papers by published date (most recent first)
+                    papers.sort(key=lambda x: x.get("published") or "", reverse=True)
+                    
+                    for paper in papers[:5]:  # Take only 5 most recent
+                        paper_id = paper.get("id")
+                        
+                        # Get paper categories
+                        categories = []
+                        cat_links = supabase_client.select(
+                            "paper_category",
+                            filters={"paper_id": paper_id},
+                            columns="category_id"
+                        ) or []
+                        
+                        if cat_links:
+                            cat_ids = [link.get("category_id") for link in cat_links if link.get("category_id")]
+                            if cat_ids:
+                                cats = supabase_client.select_in(
+                                    "categories",
+                                    "id",
+                                    cat_ids,
+                                    columns="category"
+                                ) or []
+                                categories = [cat.get("category") for cat in cats if cat.get("category")]
+                        
+                        # Get paper keywords
+                        keywords = []
+                        kw_links = supabase_client.select(
+                            "paper_keyword",
+                            filters={"paper_id": paper_id},
+                            columns="keyword_id"
+                        ) or []
+                        
+                        if kw_links:
+                            kw_ids = [link.get("keyword_id") for link in kw_links if link.get("keyword_id")]
+                            if kw_ids:
+                                kws = supabase_client.select_in(
+                                    "keywords",
+                                    "id",
+                                    kw_ids,
+                                    columns="keyword"
+                                ) or []
+                                keywords = [kw.get("keyword") for kw in kws if kw.get("keyword")]
+                        
+                        recent_papers.append({
+                            "title": paper.get("paper_title") or "Unknown",
+                            "published": paper.get("published") or "Unknown",
+                            "arxiv_id": paper.get("arxiv_entry") or "Unknown",
+                            "categories": categories,
+                            "keywords": keywords
+                        })
+            
             # Build author data with "Unknown" for empty fields
             author_data = {
                 "id": str(author.get("id", "Unknown")),
@@ -605,16 +684,64 @@ async def export_authors() -> Dict[str, Any]:
                 "citations": author.get("citations") or 0,
                 "h_index": author.get("h_index") or 0,
                 "i10_index": author.get("i10_index") or 0,
-                "affiliations": affiliations if affiliations else [{"affiliation": "Unknown", "role": "Unknown"}]
+                "affiliations": affiliations if affiliations else [{"affiliation": "Unknown", "role": "Unknown"}],
+                "recent_papers": recent_papers
             }
             
             result.append(author_data)
         
-        return {
-            "success": True,
-            "data": result,
-            "total_count": len(result)
-        }
+        # Handle different export formats
+        if format.lower() == "csv":
+            # Generate CSV format - only author basic info and affiliations
+            output = io.StringIO()
+            writer = csv.writer(output)
+            
+            # Write CSV headers (no paper info)
+            headers = [
+                "ID", "Name (EN)", "Name (CN)", "Email", "ORCID", 
+                "Citations", "H-Index", "I10-Index", "Affiliations", "Roles"
+            ]
+            writer.writerow(headers)
+            
+            # Write data rows
+            for author in result:
+                # Flatten affiliations
+                aff_names = "; ".join([aff["affiliation"] for aff in author["affiliations"]])
+                aff_roles = "; ".join([aff["role"] for aff in author["affiliations"]])
+                
+                row = [
+                    author["id"],
+                    author["author_name_en"],
+                    author["author_name_cn"],
+                    author["email"],
+                    author["orcid"],
+                    author["citations"],
+                    author["h_index"],
+                    author["i10_index"],
+                    aff_names,
+                    aff_roles
+                ]
+                writer.writerow(row)
+            
+            output.seek(0)
+            
+            # Return CSV as streaming response
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"authors_export_{timestamp}.csv"
+            
+            return StreamingResponse(
+                io.BytesIO(output.getvalue().encode('utf-8')),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename={filename}"}
+            )
+        else:
+            # Return JSON format
+            return {
+                "success": True,
+                "data": result,
+                "total_count": len(result)
+            }
         
     except Exception as e:
         print(f"Export authors API error: {e}")
