@@ -404,3 +404,18 @@ export async function getPendingPapers(sessionId: string) {
     count: number
   }
 }
+
+export async function supplementRoles(params: {
+  batch_size?: number
+  max_records?: number
+}) {
+  const { data } = await api.post('/data/supplement-roles', params)
+  return data as {
+    status: string
+    message: string
+    processed_count: number
+    updated_count: number
+    failed_count: number
+    api_quota_exhausted?: boolean
+  }
+}

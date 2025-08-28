@@ -1,7 +1,7 @@
 import { Card, List, Typography, Space, Tag, Pagination, Button, InputNumber, Select, message, Input, DatePicker, Upload, Tooltip } from 'antd'
 import { UploadOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
-import { getLatestPapers, triggerFetch, triggerFetchById } from '../api'
+import { getLatestPapers, triggerFetch, triggerFetchById, supplementRoles } from '../api'
 import dayjs from 'dayjs'
 import PaperSearch from './PaperSearch'
 
@@ -24,6 +24,7 @@ export default function LatestPapers() {
   const [ids, setIds] = useState('')
   const [fetchingById, setFetchingById] = useState(false)
   const [fetchingByJson, setFetchingByJson] = useState(false)
+  const [supplementingRoles, setSupplementingRoles] = useState(false)
 
   const [dateRange, setDateRange] = useState<[string, string]>(() => {
     const today = dayjs().format('YYYY-MM-DD')
@@ -96,6 +97,29 @@ export default function LatestPapers() {
       message.error(e?.message || 'Trigger failed')
     } finally {
       setFetching(false)
+    }
+  }
+
+  async function onSupplementRoles() {
+    setSupplementingRoles(true)
+    try {
+      const res = await supplementRoles({
+        batch_size: 50,
+        max_records: 1000
+      })
+      
+      if (res.api_quota_exhausted) {
+        message.warning(`Role补充完成，但API配额已用尽。已处理: ${res.processed_count}, 更新: ${res.updated_count}, 失败: ${res.failed_count}`)
+      } else {
+        message.success(`Role补充完成！已处理: ${res.processed_count}, 更新: ${res.updated_count}, 失败: ${res.failed_count}`)
+      }
+      
+      // Refresh data after role supplementation
+      await load()
+    } catch (e: any) {
+      message.error(e?.message || 'Role补充失败')
+    } finally {
+      setSupplementingRoles(false)
     }
   }
 
@@ -225,6 +249,13 @@ export default function LatestPapers() {
              >
                <Button loading={fetchingByJson} icon={<UploadOutlined />}>Upload JSON</Button>
              </Upload>
+             <Button 
+               loading={supplementingRoles} 
+               onClick={onSupplementRoles}
+               type="default"
+             >
+               Role Field Supplement
+             </Button>
              <Tooltip
                title={
                  <div>

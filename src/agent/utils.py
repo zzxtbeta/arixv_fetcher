@@ -1187,13 +1187,13 @@ async def create_schema_if_not_exists(cur) -> None:
 
 # TEMPORARILY DISABLED - Tavily functionality commented out
 # Global variables for API key rotation
-# _TAVILY_API_KEYS = [
-#     "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",
-#     "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", 
-#     "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"
-# ]
-# _CURRENT_TAVILY_KEY_INDEX = 0
-# _TAVILY_CLIENT_CACHE = {}
+_TAVILY_API_KEYS = [
+    "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",
+    "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", 
+    "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"
+]
+_CURRENT_TAVILY_KEY_INDEX = 0
+_TAVILY_CLIENT_CACHE = {}
 
 # API Rate Limiting Variables
 _LAST_TAVILY_REQUEST_TIME = 0.0
@@ -1205,7 +1205,7 @@ def _get_tavily_semaphore():
     """Get or create Tavily API semaphore for concurrency control."""
     global _TAVILY_SEMAPHORE
     if _TAVILY_SEMAPHORE is None:
-        max_concurrency = int(os.getenv("TAVILY_MAX_CONCURRENCY", "3"))
+        max_concurrency = int(os.getenv("TAVILY_MAX_CONCURRENCY", "2"))
         _TAVILY_SEMAPHORE = asyncio.Semaphore(max_concurrency)
     return _TAVILY_SEMAPHORE
 
@@ -1216,8 +1216,8 @@ async def _rate_limit_tavily_request():
     current_time = time.time()
     
     # Configuration from environment
-    request_delay = float(os.getenv("TAVILY_REQUEST_DELAY", "1.0"))
-    requests_per_minute = int(os.getenv("TAVILY_REQUESTS_PER_MINUTE", "30"))
+    request_delay = float(os.getenv("TAVILY_REQUEST_DELAY", "3.0"))
+    requests_per_minute = int(os.getenv("TAVILY_REQUESTS_PER_MINUTE", "10"))
     
     # Check if we need to reset the request window (1 minute)
     if current_time - _TAVILY_REQUEST_WINDOW_START >= 60.0:
@@ -1283,15 +1283,10 @@ def is_quota_exceeded_error(error_msg: str) -> bool:
     return any(indicator in error_lower for indicator in quota_indicators)
 
 def get_tavily_client() -> Optional[object]:
-    """Get Tavily client instance - TEMPORARILY DISABLED."""
-    # TEMPORARILY DISABLED - Always return None
-    logger.info("[TAVILY] DISABLED - Client creation skipped")
-    return None
-    
-    # Original code commented out:
-    # if not TAVILY_AVAILABLE:
-    #     logger.warning("Tavily client not available. Please install: pip install tavily-python")
-    #     return None
+    """Get Tavily client instance."""
+    if not TAVILY_AVAILABLE:
+        logger.warning("Tavily client not available. Please install: pip install tavily-python")
+        return None
     
     api_key = get_next_tavily_api_key()
     if not api_key:
@@ -1311,7 +1306,7 @@ def get_tavily_client() -> Optional[object]:
         return None
 
 async def search_person_role_with_tavily(name: str, affiliation: str) -> Optional[Dict[str, Any]]:
-    """Search for person's role information using Tavily web search - TEMPORARILY DISABLED.
+    """Search for person's role information using Tavily web search.
     
     Args:
         name: Person's full name
@@ -1320,14 +1315,9 @@ async def search_person_role_with_tavily(name: str, affiliation: str) -> Optiona
     Returns:
         Dict with search results and extracted role information, or None if failed
     """
-    # TEMPORARILY DISABLED - Return None to skip Tavily processing
-    logger.info(f"[TAVILY] DISABLED - Skipping role search for {name} at {affiliation}")
-    return None
-    
-    # Original code commented out:
-    # if not name or not affiliation:
-    #     logger.warning("Name and affiliation are required for Tavily search")
-    #     return None
+    if not name or not affiliation:
+        logger.warning("Name and affiliation are required for Tavily search")
+        return None
     
     query = f"What is {name}'s role position job title at {affiliation}?"
     logger.info(f"Tavily searching: {query}")

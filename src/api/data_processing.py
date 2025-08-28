@@ -4,6 +4,8 @@ Provides a single endpoint to fetch arXiv papers and store them in the database.
 """
 
 import logging
+import os
+import asyncio
 from typing import Optional, List
 from datetime import datetime, timedelta, timezone
 
@@ -11,6 +13,8 @@ from fastapi import APIRouter, HTTPException, Request, Query, UploadFile, File
 from pydantic import BaseModel
 
 from src.agent.resume_manager import resume_manager
+from src.db.database import DatabaseManager
+from src.agent.utils import search_person_role_with_tavily
 
 logger = logging.getLogger(__name__)
 
@@ -933,3 +937,155 @@ async def upload_papers_json(request: Request, file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Error processing uploaded file: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process uploaded file: {str(e)}")
+
+
+@router.post("/supplement-roles")
+async def supplement_roles_api(
+    request: Request,
+    batch_size: Optional[int] = Query(50, description="Number of records to process in each batch"),
+    max_records: Optional[int] = Query(1000, description="Maximum number of records to process")
+) -> dict:
+    """Supplement NULL role fields in author_affiliation table using Tavily API.
+    
+    Args:
+        batch_size: Number of records to process in each batch (default: 50)
+        max_records: Maximum number of records to process (default: 1000)
+        
+    Returns:
+        Dict with processing status and statistics
+    """
+    logger.info("=== SUPPLEMENT ROLES API CALLED ===")
+    
+    try:
+        # Check if Tavily is enabled
+        tavily_enabled = os.getenv("TAVILY_ENABLED", "false").lower() in ("true", "1", "yes", "on")
+        if not tavily_enabled:
+            raise HTTPException(
+                status_code=400, 
+                detail="Tavily API is not enabled. Please set TAVILY_ENABLED=true in your environment."
+            )
+        
+        # Initialize database connection
+        db_uri = os.getenv("DATABASE_URL")
+        if not db_uri:
+            raise HTTPException(status_code=500, detail="Database URL not configured")
+        
+        await DatabaseManager.initialize(db_uri)
+        pool = await DatabaseManager.get_pool()
+        
+        # Statistics tracking
+        total_processed = 0
+        total_updated = 0
+        total_failed = 0
+        api_quota_exhausted = False
+        
+        # Batch processing delay (from environment or default)
+        batch_delay = float(os.getenv("TAVILY_BATCH_DELAY", "2.0"))
+        
+        logger.info(f"Starting role supplementation with batch_size={batch_size}, max_records={max_records}")
+        
+        while total_processed < max_records and not api_quota_exhausted:
+            # Fetch a batch of records with NULL roles
+            async with pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        SELECT aa.id, aa.author_id, aa.affiliation_id, 
+                               a.author_name_en, af.aff_name
+                        FROM author_affiliation aa
+                        JOIN authors a ON a.id = aa.author_id
+                        JOIN affiliations af ON af.id = aa.affiliation_id
+                        WHERE aa.role IS NULL
+                        ORDER BY aa.id ASC
+                        LIMIT %s
+                        """,
+                        (batch_size,)
+                    )
+                    rows = await cur.fetchall()
+            
+            if not rows:
+                logger.info("No more records with NULL roles found")
+                break
+            
+            logger.info(f"Processing batch of {len(rows)} records...")
+            
+            # Process each record in the batch
+            batch_updated = 0
+            batch_failed = 0
+            
+            for i, (aa_id, author_id, affiliation_id, author_name, aff_name) in enumerate(rows):
+                try:
+                    # Add delay between API calls to avoid rate limiting
+                    if i > 0:
+                        await asyncio.sleep(batch_delay)
+                    
+                    # Call Tavily API to get role information
+                    tavily_result = await search_person_role_with_tavily(author_name, aff_name)
+                    
+                    if tavily_result and tavily_result.get("search_successful"):
+                        extracted_role = tavily_result.get("extracted_role")
+                        if extracted_role and extracted_role.strip():
+                            # Update the role in database
+                            async with pool.connection() as conn:
+                                async with conn.cursor() as cur:
+                                    await cur.execute(
+                                        "UPDATE author_affiliation SET role = %s WHERE id = %s",
+                                        (extracted_role.strip(), aa_id)
+                                    )
+                                    await conn.commit()
+                            
+                            batch_updated += 1
+                            logger.info(f"Updated role for {author_name} at {aff_name}: {extracted_role}")
+                        else:
+                            batch_failed += 1
+                            logger.debug(f"No role extracted for {author_name} at {aff_name}")
+                    else:
+                        batch_failed += 1
+                        logger.debug(f"Tavily search failed for {author_name} at {aff_name}")
+                
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    # Check for API quota exhaustion
+                    if "quota" in error_msg or "limit" in error_msg or "exceeded" in error_msg:
+                        logger.error(f"Tavily API quota exhausted: {e}")
+                        api_quota_exhausted = True
+                        break
+                    else:
+                        batch_failed += 1
+                        logger.error(f"Error processing {author_name} at {aff_name}: {e}")
+            
+            total_processed += len(rows)
+            total_updated += batch_updated
+            total_failed += batch_failed
+            
+            logger.info(f"Batch completed: {batch_updated} updated, {batch_failed} failed")
+            
+            # Break if API quota is exhausted
+            if api_quota_exhausted:
+                break
+        
+        # Prepare response
+        status = "completed" if not api_quota_exhausted else "quota_exhausted"
+        message = f"Role supplementation {status}. Processed: {total_processed}, Updated: {total_updated}, Failed: {total_failed}"
+        
+        if api_quota_exhausted:
+            message += ". Tavily API quota exhausted."
+        
+        logger.info(f"Role supplementation finished: {message}")
+        
+        return {
+            "status": status,
+            "message": message,
+            "statistics": {
+                "total_processed": total_processed,
+                "total_updated": total_updated,
+                "total_failed": total_failed,
+                "api_quota_exhausted": api_quota_exhausted
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in role supplementation: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Role supplementation failed: {str(e)}")

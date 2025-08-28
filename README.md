@@ -13,6 +13,7 @@
 - 新增 ORCID 富化：基于作者姓名 + 机构相似匹配补全作者 ORCID 与作者-机构的 role/start_date/end_date，支持角色信息完整组合。
 - 新增 openalex 富化：基于作者姓名 + 机构相似度补全作者citations，h-index和110-index。
 - 新增 tavily 富化：基于作者姓名 + 机构相似度补全作者在所在机构的role。
+- 新增 role filed supplement 补全接口，基于作者姓名 + 机构相似度调用tavily api补全作者在所在机构的role。
 
 技术栈：FastAPI、LangGraph（Send 并行）、psycopg3、requests、pdfplumber、Tavily API、Supabase Python SDK（通用查询）、**pyalex（OpenAlex Python SDK）**、React + Ant Design、ORCID Public API。
 
@@ -213,6 +214,17 @@ curl -X POST \
     - `overwrite` ：布尔，默认 `false` 。为 `true` 时覆盖现有数据；为 `false` 时只更新空值。
   - 示例： `POST /data/enrich-openalex-author?author_id=796&overwrite=true`
 
+- Role字段补充：`POST /data/supplement-roles`
+  - 功能：批量补充 `author_affiliation` 表中 `role` 字段为 NULL 的记录，使用 Tavily API 搜索作者在机构的职位信息
+  - 特点：
+    - 自动查询所有 `role` 为 NULL 的作者-机构关系记录
+    - 基于作者姓名和机构名称调用 Tavily API 进行网络搜索
+    - 智能提取职位角色信息并更新数据库
+    - 支持批量处理和错误处理机制
+    - 遵循 Tavily API 速率限制，避免请求过频
+  - 返回：处理统计信息（成功更新数量、跳过数量、错误数量）
+  - 示例：`POST /data/supplement-roles`
+
 ### 看板与搜索接口
 
 - 看板总览：`GET /dashboard/overview` - 返回论文/作者/机构/类别总数统计
@@ -397,6 +409,12 @@ curl -X POST \
     - 集成论文搜索功能，实时筛选匹配结果
     - 支持在顶部直接发起抓取（日期范围/类别/上限、或按 ID）
     - 搜索状态下显示匹配数量和筛选提示
+  - **Role字段补充功能**：
+    - 新增"Role Field Supplement"按钮，位于"Upload JSON"按钮右侧
+    - 一键批量补充数据库中缺失的作者职位角色信息
+    - 实时显示处理进度和状态反馈
+    - 支持处理结果统计展示（成功/跳过/错误数量）
+    - 集成错误处理和用户友好的状态提示
 
 ### OpenAlex 全球学术查询特色
 
