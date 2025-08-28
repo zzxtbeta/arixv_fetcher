@@ -25,6 +25,8 @@ export default function LatestPapers() {
   const [fetchingById, setFetchingById] = useState(false)
   const [fetchingByJson, setFetchingByJson] = useState(false)
   const [supplementingRoles, setSupplementingRoles] = useState(false)
+  const [startId, setStartId] = useState<number | undefined>(1423)
+  const [endId, setEndId] = useState<number | undefined>(undefined)
 
   const [dateRange, setDateRange] = useState<[string, string]>(() => {
     const today = dayjs().format('YYYY-MM-DD')
@@ -103,10 +105,19 @@ export default function LatestPapers() {
   async function onSupplementRoles() {
     setSupplementingRoles(true)
     try {
-      const res = await supplementRoles({
+      const params: any = {
         batch_size: 50,
-        max_records: 1000
-      })
+        max_records: 5000
+      }
+      
+      if (startId !== undefined) {
+        params.start_id = startId
+      }
+      if (endId !== undefined) {
+        params.end_id = endId
+      }
+      
+      const res = await supplementRoles(params)
       
       if (res.api_quota_exhausted) {
         message.warning(`Role补充完成，但API配额已用尽。已处理: ${res.processed_count}, 更新: ${res.updated_count}, 失败: ${res.failed_count}`)
@@ -249,13 +260,31 @@ export default function LatestPapers() {
              >
                <Button loading={fetchingByJson} icon={<UploadOutlined />}>Upload JSON</Button>
              </Upload>
-             <Button 
-               loading={supplementingRoles} 
-               onClick={onSupplementRoles}
-               type="default"
-             >
-               Role Field Supplement
-             </Button>
+             <Space>
+               <Typography.Text type="secondary">ID Range:</Typography.Text>
+               <InputNumber 
+                 placeholder="Start ID" 
+                 value={startId} 
+                 onChange={(v) => setStartId(v || undefined)}
+                 style={{ width: 100 }}
+                 min={1}
+               />
+               <Typography.Text type="secondary">-</Typography.Text>
+               <InputNumber 
+                 placeholder="End ID" 
+                 value={endId} 
+                 onChange={(v) => setEndId(v || undefined)}
+                 style={{ width: 100 }}
+                 min={1}
+               />
+               <Button 
+                 loading={supplementingRoles} 
+                 onClick={onSupplementRoles}
+                 type="default"
+               >
+                 Role Field Supplement
+               </Button>
+             </Space>
              <Tooltip
                title={
                  <div>

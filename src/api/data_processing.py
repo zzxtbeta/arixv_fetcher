@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from src.agent.resume_manager import resume_manager
 from src.db.database import DatabaseManager
 from src.agent.utils import search_person_role_with_tavily
+from .models import SupplementRolesRequest
 
 logger = logging.getLogger(__name__)
 
@@ -942,14 +943,15 @@ async def upload_papers_json(request: Request, file: UploadFile = File(...)):
 @router.post("/supplement-roles")
 async def supplement_roles_api(
     request: Request,
-    batch_size: Optional[int] = Query(50, description="Number of records to process in each batch"),
-    max_records: Optional[int] = Query(1000, description="Maximum number of records to process")
+    body: SupplementRolesRequest
 ) -> dict:
     """Supplement NULL role fields in author_affiliation table using Tavily API.
     
     Args:
         batch_size: Number of records to process in each batch (default: 50)
-        max_records: Maximum number of records to process (default: 1000)
+        max_records: Maximum number of records to process (default: 5000)
+        start_id: Start ID for processing range (inclusive, optional)
+        end_id: End ID for processing range (inclusive, optional)
         
     Returns:
         Dict with processing status and statistics
@@ -982,45 +984,99 @@ async def supplement_roles_api(
         # Batch processing delay (from environment or default)
         batch_delay = float(os.getenv("TAVILY_BATCH_DELAY", "2.0"))
         
-        logger.info(f"Starting role supplementation with batch_size={batch_size}, max_records={max_records}")
+        # Extract parameters from request body
+        batch_size = body.batch_size
+        max_records = body.max_records
+        start_id = body.start_id
+        end_id = body.end_id
         
-        while total_processed < max_records and not api_quota_exhausted:
-            # Fetch a batch of records with NULL roles
+        logger.info(f"Starting role supplementation with batch_size={batch_size}, max_records={max_records}, start_id={start_id}, end_id={end_id}")
+        
+        # Get total count of records to process (only NULL roles in specified range)
+        async with pool.connection() as conn:
+            async with conn.cursor() as cur:
+                # Build WHERE clause for ID range filtering and NULL roles
+                where_conditions = ["role IS NULL"]
+                params = []
+                
+                if start_id is not None:
+                    where_conditions.append("id >= %s")
+                    params.append(start_id)
+                
+                if end_id is not None:
+                    where_conditions.append("id <= %s")
+                    params.append(end_id)
+                
+                where_clause = "WHERE " + " AND ".join(where_conditions)
+                
+                query = f"SELECT COUNT(*) FROM author_affiliation {where_clause}"
+                await cur.execute(query, params)
+                total_null_records = (await cur.fetchone())[0]
+        
+        logger.info(f"Total records with NULL roles in specified range: {total_null_records}")
+        
+        # Process records in batches, only fetching NULL role records in specified range
+        offset = 0
+        
+        while offset < total_null_records and total_processed < max_records and not api_quota_exhausted:
+            # Fetch a batch of records (only NULL roles in specified range)
             async with pool.connection() as conn:
                 async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
+                    # Build WHERE clause for ID range filtering and NULL roles
+                    where_conditions = ["aa.role IS NULL"]
+                    params = []
+                    
+                    if start_id is not None:
+                        where_conditions.append("aa.id >= %s")
+                        params.append(start_id)
+                    
+                    if end_id is not None:
+                        where_conditions.append("aa.id <= %s")
+                        params.append(end_id)
+                    
+                    where_clause = "WHERE " + " AND ".join(where_conditions)
+                    
+                    # Add LIMIT and OFFSET parameters
+                    params.extend([batch_size, offset])
+                    
+                    query = f"""
                         SELECT aa.id, aa.author_id, aa.affiliation_id, 
-                               a.author_name_en, af.aff_name
+                               a.author_name_en, af.aff_name, aa.role
                         FROM author_affiliation aa
                         JOIN authors a ON a.id = aa.author_id
                         JOIN affiliations af ON af.id = aa.affiliation_id
-                        WHERE aa.role IS NULL
+                        {where_clause}
                         ORDER BY aa.id ASC
-                        LIMIT %s
-                        """,
-                        (batch_size,)
-                    )
+                        LIMIT %s OFFSET %s
+                    """
+                    
+                    await cur.execute(query, params)
                     rows = await cur.fetchall()
             
             if not rows:
-                logger.info("No more records with NULL roles found")
+                logger.info("No more records found")
                 break
             
-            logger.info(f"Processing batch of {len(rows)} records...")
+            logger.info(f"Processing batch of {len(rows)} records (offset: {offset})...")
             
             # Process each record in the batch
             batch_updated = 0
             batch_failed = 0
+            batch_skipped = 0
+            batch_processed = 0  # Count of records actually processed (called Tavily API)
             
-            for i, (aa_id, author_id, affiliation_id, author_name, aff_name) in enumerate(rows):
+            for i, (aa_id, author_id, affiliation_id, author_name, aff_name, current_role) in enumerate(rows):
+                # All records should have NULL role since we filtered for them
+                # No need to check current_role since query already filters for NULL roles
+                
                 try:
                     # Add delay between API calls to avoid rate limiting
-                    if i > 0:
+                    if total_processed > 0:  # Add delay for all API calls except the first
                         await asyncio.sleep(batch_delay)
                     
                     # Call Tavily API to get role information
                     tavily_result = await search_person_role_with_tavily(author_name, aff_name)
+                    batch_processed += 1  # Count this as a processed record
                     
                     if tavily_result and tavily_result.get("search_successful"):
                         extracted_role = tavily_result.get("extracted_role")
@@ -1042,8 +1098,14 @@ async def supplement_roles_api(
                     else:
                         batch_failed += 1
                         logger.debug(f"Tavily search failed for {author_name} at {aff_name}")
+                    
+                    # Check if we've reached the max_records limit
+                    if (total_processed + batch_processed) >= max_records:
+                        logger.info(f"Reached max_records limit ({max_records}), stopping processing")
+                        break
                 
                 except Exception as e:
+                    batch_processed += 1  # Count this as a processed record even if it failed
                     error_msg = str(e).lower()
                     # Check for API quota exhaustion
                     if "quota" in error_msg or "limit" in error_msg or "exceeded" in error_msg:
@@ -1053,12 +1115,19 @@ async def supplement_roles_api(
                     else:
                         batch_failed += 1
                         logger.error(f"Error processing {author_name} at {aff_name}: {e}")
+                    
+                    # Check if we've reached the max_records limit
+                    if (total_processed + batch_processed) >= max_records:
+                        logger.info(f"Reached max_records limit ({max_records}), stopping processing")
+                        break
             
-            total_processed += len(rows)
+            # Update counters
+            total_processed += batch_processed  # Only count records that actually called Tavily API
             total_updated += batch_updated
             total_failed += batch_failed
+            offset += batch_size
             
-            logger.info(f"Batch completed: {batch_updated} updated, {batch_failed} failed")
+            logger.info(f"Batch completed: {batch_updated} updated, {batch_failed} failed, {batch_skipped} skipped")
             
             # Break if API quota is exhausted
             if api_quota_exhausted:
