@@ -1,7 +1,7 @@
 import { Card, List, Typography, Space, Tag, Pagination, Button, InputNumber, Select, message, Input, DatePicker, Upload, Tooltip } from 'antd'
 import { UploadOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
-import { getLatestPapers, triggerFetch, triggerFetchById, supplementRoles } from '../api'
+import { getLatestPapers, triggerFetch, triggerFetchById, supplementRoles, dataEnrichment, processRole } from '../api'
 import dayjs from 'dayjs'
 import PaperSearch from './PaperSearch'
 
@@ -27,6 +27,16 @@ export default function LatestPapers() {
   const [supplementingRoles, setSupplementingRoles] = useState(false)
   const [startId, setStartId] = useState<number | undefined>(1423)
   const [endId, setEndId] = useState<number | undefined>(undefined)
+  
+  // Data Enrichment states
+  const [enrichingData, setEnrichingData] = useState(false)
+  const [enrichStartId, setEnrichStartId] = useState<number | undefined>(1)
+  const [enrichEndId, setEnrichEndId] = useState<number | undefined>(undefined)
+  
+  // Process Role states
+  const [processingRole, setProcessingRole] = useState(false)
+  const [processStartId, setProcessStartId] = useState<number | undefined>(1)
+  const [processEndId, setProcessEndId] = useState<number | undefined>(undefined)
 
   const [dateRange, setDateRange] = useState<[string, string]>(() => {
     const today = dayjs().format('YYYY-MM-DD')
@@ -131,6 +141,66 @@ export default function LatestPapers() {
       message.error(e?.message || 'Role补充失败')
     } finally {
       setSupplementingRoles(false)
+    }
+  }
+
+  async function onDataEnrichment() {
+    setEnrichingData(true)
+    try {
+      const params: any = {
+        batch_size: 50,
+        max_records: 5000
+      }
+      
+      if (enrichStartId !== undefined) {
+        params.start_id = enrichStartId
+      }
+      if (enrichEndId !== undefined) {
+        params.end_id = enrichEndId
+      }
+      
+      const res = await dataEnrichment(params)
+       
+       if (res.api_quota_exhausted) {
+         message.warning(`数据丰富化完成，但API配额已用尽。已处理: ${res.processed_count}, 更新: ${res.updated_count}, 失败: ${res.failed_count}`)
+       } else {
+         message.success(`数据丰富化完成！已处理: ${res.processed_count}, 更新: ${res.updated_count}, 失败: ${res.failed_count}`)
+       }
+      
+      // Refresh data after enrichment
+      await load()
+    } catch (e: any) {
+      message.error(e?.message || '数据丰富化失败')
+    } finally {
+      setEnrichingData(false)
+    }
+  }
+
+  async function onProcessRole() {
+    setProcessingRole(true)
+    try {
+      const params: any = {
+        batch_size: 50,
+        max_records: 5000
+      }
+      
+      if (processStartId !== undefined) {
+        params.start_id = processStartId
+      }
+      if (processEndId !== undefined) {
+        params.end_id = processEndId
+      }
+      
+      const res = await processRole(params)
+      
+      message.success(`角色处理完成！已处理: ${res.processed_count}, 更新: ${res.updated_count}, 失败: ${res.failed_count}`)
+      
+      // Refresh data after role processing
+      await load()
+    } catch (e: any) {
+      message.error(e?.message || '角色处理失败')
+    } finally {
+      setProcessingRole(false)
     }
   }
 
@@ -260,31 +330,6 @@ export default function LatestPapers() {
              >
                <Button loading={fetchingByJson} icon={<UploadOutlined />}>Upload JSON</Button>
              </Upload>
-             <Space>
-               <Typography.Text type="secondary">ID Range:</Typography.Text>
-               <InputNumber 
-                 placeholder="Start ID" 
-                 value={startId} 
-                 onChange={(v) => setStartId(v || undefined)}
-                 style={{ width: 100 }}
-                 min={1}
-               />
-               <Typography.Text type="secondary">-</Typography.Text>
-               <InputNumber 
-                 placeholder="End ID" 
-                 value={endId} 
-                 onChange={(v) => setEndId(v || undefined)}
-                 style={{ width: 100 }}
-                 min={1}
-               />
-               <Button 
-                 loading={supplementingRoles} 
-                 onClick={onSupplementRoles}
-                 type="default"
-               >
-                 Role Field Supplement
-               </Button>
-             </Space>
              <Tooltip
                title={
                  <div>
@@ -308,6 +353,86 @@ export default function LatestPapers() {
                <InfoCircleOutlined style={{ color: '#1890ff', cursor: 'help' }} />
              </Tooltip>
            </Space>
+           <div style={{ border: '1px solid #d9d9d9', borderRadius: '6px', padding: '12px', background: '#fafafa', marginTop: '12px' }}>
+             <Typography.Text strong style={{ marginBottom: '8px', display: 'block' }}>Field Supplement</Typography.Text>
+             <Space direction="vertical" size="small" style={{ width: '100%' }}>
+               <Space wrap>
+                 <Typography.Text type="secondary">Role Supplement ID Range:</Typography.Text>
+                 <InputNumber 
+                   placeholder="Start ID" 
+                   value={startId} 
+                   onChange={(v) => setStartId(v || undefined)}
+                   style={{ width: 100 }}
+                   min={1}
+                 />
+                 <Typography.Text type="secondary">-</Typography.Text>
+                 <InputNumber 
+                   placeholder="End ID" 
+                   value={endId} 
+                   onChange={(v) => setEndId(v || undefined)}
+                   style={{ width: 100 }}
+                   min={1}
+                 />
+                 <Button 
+                   loading={supplementingRoles} 
+                   onClick={onSupplementRoles}
+                   type="default"
+                 >
+                   Role Field Supplement
+                 </Button>
+               </Space>
+               <Space wrap>
+                 <Typography.Text type="secondary">Homepage Supplement ID Range:</Typography.Text>
+                 <InputNumber 
+                   placeholder="Start ID" 
+                   value={enrichStartId} 
+                   onChange={(v) => setEnrichStartId(v || undefined)}
+                   style={{ width: 100 }}
+                   min={1}
+                 />
+                 <Typography.Text type="secondary">-</Typography.Text>
+                 <InputNumber 
+                   placeholder="End ID" 
+                   value={enrichEndId} 
+                   onChange={(v) => setEnrichEndId(v || undefined)}
+                   style={{ width: 100 }}
+                   min={1}
+                 />
+                 <Button 
+                   loading={enrichingData} 
+                   onClick={onDataEnrichment}
+                   type="default"
+                 >
+                   HomePage Field Supplement
+                 </Button>
+               </Space>
+               <Space wrap>
+                 <Typography.Text type="secondary">Process Role ID Range:</Typography.Text>
+                 <InputNumber 
+                   placeholder="Start ID" 
+                   value={processStartId} 
+                   onChange={(v) => setProcessStartId(v || undefined)}
+                   style={{ width: 100 }}
+                   min={1}
+                 />
+                 <Typography.Text type="secondary">-</Typography.Text>
+                 <InputNumber 
+                   placeholder="End ID" 
+                   value={processEndId} 
+                   onChange={(v) => setProcessEndId(v || undefined)}
+                   style={{ width: 100 }}
+                   min={1}
+                 />
+                 <Button 
+                   loading={processingRole} 
+                   onClick={onProcessRole}
+                   type="default"
+                 >
+                   Process Role
+                 </Button>
+               </Space>
+             </Space>
+           </div>
         </Space>
       }
       style={{ background: '#ffffff', borderRadius: 12 }}

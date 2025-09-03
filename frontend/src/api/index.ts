@@ -421,3 +421,36 @@ export async function supplementRoles(params: {
     api_quota_exhausted?: boolean
   }
 }
+
+export async function dataEnrichment(params: {
+  batch_size?: number
+  max_records?: number
+  start_id?: number
+  end_id?: number
+}) {
+  const { data } = await api.post('/data/data-enrichment', params)
+  return data as {
+    status: string
+    message: string
+    processed_count: number
+    updated_count: number
+    failed_count: number
+    api_quota_exhausted?: boolean
+  }
+}
+
+export async function processRole(params: {
+  batch_size?: number
+  max_records?: number
+  start_id?: number
+  end_id?: number
+}) {
+  const { data } = await api.post('/data/process-role', params)
+  return data as {
+    status: string
+    message: string
+    processed_count: number
+    updated_count: number
+    failed_count: number
+  }
+}

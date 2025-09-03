@@ -14,8 +14,8 @@ from pydantic import BaseModel
 
 from src.agent.resume_manager import resume_manager
 from src.db.database import DatabaseManager
-from src.agent.utils import search_person_role_with_tavily
-from .models import SupplementRolesRequest
+from src.agent.utils import search_person_role_with_tavily, search_person_homepage_with_tavily, _extract_homepage_link_with_llm
+from .models import SupplementRolesRequest, DataEnrichmentRequest, ProcessRoleRequest
 
 logger = logging.getLogger(__name__)
 
@@ -1158,3 +1158,403 @@ async def supplement_roles_api(
     except Exception as e:
         logger.error(f"Error in role supplementation: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Role supplementation failed: {str(e)}")
+
+
+@router.post("/data-enrichment")
+async def data_enrichment_api(body: DataEnrichmentRequest):
+    """
+    Enrich author data by fetching homepage links using Tavily API.
+    
+    This endpoint processes authors in the specified ID range and attempts to find
+    their homepage links by querying Tavily API with the format:
+    "What is the link to {author_name_en}'s homepage at {affiliation_name}?"
+    
+    The response from Tavily is then processed by an LLM to extract the unique link.
+    """
+    try:
+        # Get environment variables
+        batch_delay = float(os.getenv("TAVILY_BATCH_DELAY", "2.0"))
+        
+        # Extract parameters from request body
+        batch_size = body.batch_size
+        max_records = body.max_records
+        start_id = body.start_id
+        end_id = body.end_id
+        
+        logger.info(f"Starting data enrichment with batch_size={batch_size}, max_records={max_records}, start_id={start_id}, end_id={end_id}")
+        
+        # Initialize database manager
+        db_manager = DatabaseManager()
+        
+        # Build WHERE clause for ID range filtering
+        where_conditions = []
+        params = []
+        
+        if start_id is not None:
+            where_conditions.append("a.id >= %s")
+            params.append(start_id)
+        
+        if end_id is not None:
+            where_conditions.append("a.id <= %s")
+            params.append(end_id)
+        
+        # Add condition for authors without homepage links
+        where_conditions.append("a.homepage IS NULL")
+        
+        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+        
+        # Get total count of authors without homepage links in the specified range
+        count_query = f"""
+            SELECT COUNT(*) as total
+            FROM authors a
+            WHERE {where_clause}
+        """
+        
+        async with db_manager.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(count_query, params)
+                total_null_records = (await cur.fetchone())[0]
+        logger.info(f"Found {total_null_records} authors without homepage links in the specified range")
+        
+        if total_null_records == 0:
+            return {
+                "status": "completed",
+                "message": "No authors found without homepage links in the specified range",
+                "processed_count": 0,
+                "updated_count": 0,
+                "failed_count": 0,
+                "api_quota_exhausted": False
+            }
+        
+        # Initialize counters
+        total_processed = 0
+        total_updated = 0
+        total_failed = 0
+        offset = 0
+        api_quota_exhausted = False
+        
+        # Process in batches
+        while offset < total_null_records and total_processed < max_records and not api_quota_exhausted:
+            # Calculate actual batch size
+            remaining_records = min(total_null_records - offset, max_records - total_processed)
+            current_batch_size = min(batch_size, remaining_records)
+            
+            # Query for authors without homepage links in the current batch
+            query = f"""
+                SELECT a.id, a.author_name_en, af.aff_name
+                FROM authors a
+                LEFT JOIN author_affiliation aa ON a.id = aa.author_id
+                LEFT JOIN affiliations af ON aa.affiliation_id = af.id
+                WHERE {where_clause}
+                ORDER BY a.id
+                LIMIT %s OFFSET %s
+            """
+            
+            batch_params = params + [current_batch_size, offset]
+            async with db_manager.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, batch_params)
+                    authors = await cur.fetchall()
+            
+            logger.info(f"Processing batch {offset // batch_size + 1}: {len(authors)} authors")
+            
+            # Process each author in the batch
+            batch_processed = 0
+            batch_updated = 0
+            batch_failed = 0
+            
+            for author in authors:
+                try:
+                    author_id = author[0]
+                    author_name = author[1]
+                    aff_name = author[2] or "unknown affiliation"
+                    
+                    batch_processed += 1
+                    
+                    # Call Tavily API to search for homepage link
+                    search_result = await search_person_homepage_with_tavily(author_name, aff_name)
+                    
+                    if search_result and search_result.get('search_successful'):
+                        # Extract homepage link from Tavily response
+                        tavily_answer = search_result.get('answer', '')
+                        
+                        if tavily_answer:
+                            # Use LLM to extract homepage link from Tavily response
+                            tavily_results = search_result.get('results', [])
+                            extracted_link = _extract_homepage_link_with_llm(
+                                author_name, aff_name, tavily_answer, tavily_results
+                            )
+                            
+                            if extracted_link:
+                                logger.info(f"Extracted homepage link for {author_name}: {extracted_link}")
+                                
+                                # Update author's homepage in database
+                                update_query = "UPDATE authors SET homepage = %s WHERE id = %s"
+                                async with db_manager.get_connection() as conn:
+                                    async with conn.cursor() as cur:
+                                        await cur.execute(update_query, [extracted_link, author_id])
+                                
+                                batch_updated += 1
+                                logger.info(f"Updated homepage for author {author_id}: {author_name}")
+                            else:
+                                logger.info(f"LLM could not extract valid homepage link for {author_name}")
+                        else:
+                            logger.info(f"No homepage answer found for {author_name}")
+                    else:
+                        # Check if search failed due to quota exhaustion
+                        if search_result and search_result.get('error') == 'API quota exhausted':
+                            logger.error(f"Tavily API quota exhausted while processing {author_name}")
+                            api_quota_exhausted = True
+                            break
+                        else:
+                            logger.warning(f"Homepage search failed for {author_name}: {search_result.get('error') if search_result else 'Unknown error'}")
+                    
+                    # Apply delay between requests
+                    await asyncio.sleep(batch_delay)
+                    
+                    # Check if we've reached the max_records limit
+                    if (total_processed + batch_processed) >= max_records:
+                        logger.info(f"Reached max_records limit ({max_records}), stopping processing")
+                        break
+                
+                except Exception as e:
+                    batch_processed += 1
+                    error_msg = str(e).lower()
+                    # Check for API quota exhaustion
+                    if "quota" in error_msg or "limit" in error_msg or "exceeded" in error_msg:
+                        logger.error(f"Tavily API quota exhausted: {e}")
+                        api_quota_exhausted = True
+                        break
+                    else:
+                        batch_failed += 1
+                        logger.error(f"Error processing {author_name} at {aff_name}: {e}")
+                    
+                    # Check if we've reached the max_records limit
+                    if (total_processed + batch_processed) >= max_records:
+                        logger.info(f"Reached max_records limit ({max_records}), stopping processing")
+                        break
+            
+            # Update counters
+            total_processed += batch_processed
+            total_updated += batch_updated
+            total_failed += batch_failed
+            offset += batch_size
+            
+            logger.info(f"Batch completed: {batch_updated} updated, {batch_failed} failed")
+            
+            # Break if API quota is exhausted
+            if api_quota_exhausted:
+                break
+        
+        # Prepare response
+        status = "completed" if not api_quota_exhausted else "quota_exhausted"
+        message = f"Data enrichment {status}. Processed: {total_processed}, Updated: {total_updated}, Failed: {total_failed}"
+        
+        if api_quota_exhausted:
+            message += ". Tavily API quota exhausted."
+        
+        logger.info(f"Data enrichment finished: {message}")
+        
+        return {
+            "status": status,
+            "message": message,
+            "processed_count": total_processed,
+            "updated_count": total_updated,
+            "failed_count": total_failed,
+            "api_quota_exhausted": api_quota_exhausted
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in data enrichment: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Data enrichment failed: {str(e)}")
+
+
+@router.post("/process-role")
+async def process_role_api(body: ProcessRoleRequest):
+    """
+    Process role data by updating author_affiliation table's role field
+    according to the role mapping table defined in resource/role_mapping.py.
+    
+    This endpoint processes author_affiliation records in the specified ID range
+    and standardizes the role field values using predefined mappings.
+    """
+    try:
+        # Import role mapping
+        import sys
+        import os
+        sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+        from resource.role_mapping import role_mapping
+        
+        # Extract parameters from request body
+        batch_size = body.batch_size
+        max_records = body.max_records
+        start_id = body.start_id
+        end_id = body.end_id
+        
+        logger.info(f"Starting role processing with batch_size={batch_size}, max_records={max_records}, start_id={start_id}, end_id={end_id}")
+        
+        # Initialize database manager
+        db_manager = DatabaseManager()
+        
+        # Build WHERE clause for ID range filtering
+        where_conditions = []
+        params = []
+        
+        if start_id is not None:
+            where_conditions.append("aa.id >= %s")
+            params.append(start_id)
+        
+        if end_id is not None:
+            where_conditions.append("aa.id <= %s")
+            params.append(end_id)
+        
+        # Add condition for records with role data that needs processing
+        where_conditions.append("aa.role IS NOT NULL AND aa.role != ''")
+        
+        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+        
+        # Get total count of author_affiliation records in the specified range
+        count_query = f"""
+            SELECT COUNT(*) as total
+            FROM author_affiliation aa
+            WHERE {where_clause}
+        """
+        
+        async with db_manager.get_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(count_query, params)
+                total_records = (await cur.fetchone())[0]
+        
+        logger.info(f"Found {total_records} author_affiliation records with role data in the specified range")
+        
+        if total_records == 0:
+            return {
+                "status": "completed",
+                "message": "No author_affiliation records found with role data in the specified range",
+                "processed_count": 0,
+                "updated_count": 0,
+                "failed_count": 0
+            }
+        
+        # Initialize counters
+        total_processed = 0
+        total_updated = 0
+        total_failed = 0
+        offset = 0
+        
+        # Process in batches
+        while offset < total_records and total_processed < max_records:
+            # Calculate actual batch size
+            remaining_records = min(total_records - offset, max_records - total_processed)
+            current_batch_size = min(batch_size, remaining_records)
+            
+            # Query for author_affiliation records in the current batch
+            query = f"""
+                SELECT aa.id, aa.role
+                FROM author_affiliation aa
+                WHERE {where_clause}
+                ORDER BY aa.id
+                LIMIT %s OFFSET %s
+            """
+            
+            batch_params = params + [current_batch_size, offset]
+            async with db_manager.get_connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, batch_params)
+                    records = await cur.fetchall()
+            
+            logger.info(f"Processing batch {offset // batch_size + 1}: {len(records)} records")
+            
+            # Process each record in the batch
+            batch_processed = 0
+            batch_updated = 0
+            batch_failed = 0
+            
+            for record in records:
+                try:
+                    record_id = record[0]
+                    current_role = record[1]
+                    
+                    batch_processed += 1
+                    
+                    # Check if current role needs mapping
+                    mapped_role = None
+                    current_role_lower = current_role.lower().strip()
+                    
+                    # Find matching role in mapping table
+                    for original_role, standard_role in role_mapping.items():
+                        if original_role.lower() in current_role_lower or current_role_lower in original_role.lower():
+                            mapped_role = standard_role
+                            break
+                    
+                    # If no exact match found, try partial matching
+                    if not mapped_role:
+                        for original_role, standard_role in role_mapping.items():
+                            # Check for partial matches (keywords)
+                            original_keywords = original_role.lower().split()
+                            current_keywords = current_role_lower.split()
+                            
+                            # If any keyword from original role is found in current role
+                            if any(keyword in current_role_lower for keyword in original_keywords):
+                                mapped_role = standard_role
+                                break
+                    
+                    # Update role if mapping found and different from current
+                    if mapped_role and mapped_role != current_role:
+                        logger.info(f"Mapping role '{current_role}' to '{mapped_role}' for record {record_id}")
+                        
+                        # Update role in database
+                        update_query = "UPDATE author_affiliation SET role = %s WHERE id = %s"
+                        async with db_manager.get_connection() as conn:
+                            async with conn.cursor() as cur:
+                                await cur.execute(update_query, [mapped_role, record_id])
+                        
+                        batch_updated += 1
+                        logger.info(f"Updated role for record {record_id}: '{current_role}' -> '{mapped_role}'")
+                    else:
+                        logger.info(f"No mapping needed for role '{current_role}' in record {record_id}")
+                    
+                    # Check if we've reached the max_records limit
+                    if (total_processed + batch_processed) >= max_records:
+                        logger.info(f"Reached max_records limit ({max_records}), stopping processing")
+                        break
+                
+                except Exception as e:
+                    batch_processed += 1
+                    batch_failed += 1
+                    logger.error(f"Error processing record {record_id}: {e}")
+                    
+                    # Check if we've reached the max_records limit
+                    if (total_processed + batch_processed) >= max_records:
+                        logger.info(f"Reached max_records limit ({max_records}), stopping processing")
+                        break
+            
+            # Update counters
+            total_processed += batch_processed
+            total_updated += batch_updated
+            total_failed += batch_failed
+            offset += batch_size
+            
+            logger.info(f"Batch completed: {batch_updated} updated, {batch_failed} failed")
+        
+        # Prepare response
+        status = "completed"
+        message = f"Role processing {status}. Processed: {total_processed}, Updated: {total_updated}, Failed: {total_failed}"
+        
+        logger.info(f"Role processing finished: {message}")
+        
+        return {
+            "status": status,
+            "message": message,
+            "processed_count": total_processed,
+            "updated_count": total_updated,
+            "failed_count": total_failed
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in role processing: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Role processing failed: {str(e)}")

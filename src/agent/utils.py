@@ -1361,6 +1361,92 @@ async def search_person_role_with_tavily(name: str, affiliation: str) -> Optiona
         "search_successful": False
     }
 
+async def search_person_homepage_with_tavily(name: str, affiliation: str) -> Optional[Dict[str, Any]]:
+    """Search for person's homepage link using Tavily API.
+    
+    Args:
+        name: Person's full name
+        affiliation: Person's institutional affiliation
+        
+    Returns:
+        Dict with search results and homepage link, or None if failed
+    """
+    if not name or not affiliation:
+        logger.warning("Name and affiliation are required for homepage search")
+        return None
+    
+    query = f"What is the link to {name}'s homepage at {affiliation}?"
+    logger.info(f"Tavily homepage search: {query}")
+    
+    # Configuration from environment
+    max_retries = int(os.getenv("API_MAX_RETRIES", "3"))
+    retry_delay = float(os.getenv("API_RETRY_DELAY", "2.0"))
+    
+    # Apply concurrency control
+    semaphore = _get_tavily_semaphore()
+    async with semaphore:
+        # Try with current API key, rotate if quota exceeded
+        for attempt in range(max_retries):
+            # Apply rate limiting before each request
+            await _rate_limit_tavily_request()
+            
+            client = get_tavily_client()
+            if not client:
+                logger.warning(f"No Tavily client available on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                continue
+                
+            try:
+                # Make the API call in a thread to avoid blocking
+                response = await asyncio.to_thread(
+                    client.search,
+                    query=query,
+                    search_depth="advanced",
+                    include_answer="advanced",
+                    max_results=8,
+                    include_domains=None,
+                    exclude_domains=None
+                )
+                
+                return {
+                    "query": query,
+                    "answer": response.get('answer', ''),
+                    "results": response.get('results', []),
+                    "search_successful": True,
+                    "person_name": name,
+                    "affiliation": affiliation
+                }
+            
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"Tavily homepage search error on attempt {attempt + 1}: {error_msg}")
+                
+                # Check if it's a quota exceeded error
+                if is_quota_exceeded_error(error_msg):
+                    logger.error(f"API quota exceeded for current key: {error_msg}")
+                    return {
+                        "query": query,
+                        "error": "API quota exhausted",
+                        "search_successful": False,
+                        "person_name": name,
+                        "affiliation": affiliation
+                    }
+                else:
+                    # Non-quota error, add delay before retry
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay)
+                    continue
+    
+    # All attempts failed
+    return {
+        "query": query,
+        "error": "All Tavily API attempts failed",
+        "search_successful": False,
+        "person_name": name,
+        "affiliation": affiliation
+    }
+
 async def search_person_general_with_tavily(name: str, affiliation: str, search_prompt: str) -> Optional[Dict[str, Any]]:
     """General Tavily search - TEMPORARILY DISABLED."""
     # TEMPORARILY DISABLED - Return None to skip Tavily processing
@@ -1451,6 +1537,169 @@ async def search_person_general_with_tavily(name: str, affiliation: str, search_
             "affiliation": affiliation,
             "search_prompt": search_prompt
         }
+
+def _extract_homepage_link_with_llm(name: str, affiliation: str, answer: str, results: List[Dict[str, Any]]) -> Optional[str]:
+    """Extract homepage link using LLM from search results.
+    
+    Args:
+        name: Person's name
+        affiliation: Institution name
+        answer: Tavily's answer summary
+        results: List of search result dictionaries
+        
+    Returns:
+        Extracted homepage URL string or None
+    """
+    try:
+        # Import LLM function
+        llm = create_llm()
+        
+        # First, validate the reliability of Tavily's answer
+        if not _is_tavily_answer_reliable(name, affiliation, answer, results, llm):
+            logger.info(f"Tavily answer deemed unreliable for {name} at {affiliation}, skipping extraction")
+            return None
+        
+        # Prepare context from search results
+        context_parts = []
+        if answer:
+            context_parts.append(f"Summary: {answer}")
+        
+        for i, result in enumerate(results[:3]):  # Limit to top 3 results
+            title = result.get('title', '')
+            content = result.get('content', '')
+            url = result.get('url', '')
+            if content:
+                context_parts.append(f"Result {i+1} ({url}): {title}\n{content[:500]}...")
+        
+        context = "\n\n".join(context_parts)
+        
+        system_prompt = (
+            "You are a precise link extractor. Given a person's name, their affiliation, "
+            "and web search results about their homepage, extract the most relevant homepage URL. "
+            "Return only the complete URL (starting with http:// or https://). "
+            "If multiple URLs are found, return the most official/institutional one. "
+            "If no clear homepage URL is found, return 'None'."
+        )
+        
+        user_prompt = (
+            f"Person: {name}\n"
+            f"Affiliation: {affiliation}\n\n"
+            f"Search Results:\n{context}\n\n"
+            f"What is the homepage URL for {name} at {affiliation}? Please provide only the URL:"
+        )
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+        
+        # Use LLM to extract homepage URL
+        response = llm.invoke(messages)
+        homepage_url = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+        
+        # Clean up the response and validate URL format
+        if homepage_url and homepage_url.lower() not in ['none', 'unknown', 'not found', '']:
+            # Basic URL validation
+            if homepage_url.startswith(('http://', 'https://')):
+                logger.info(f"Extracted homepage URL for {name}: {homepage_url}")
+                return homepage_url
+            elif '.' in homepage_url and not homepage_url.startswith(('http', 'www')):
+                # Add protocol if missing
+                homepage_url = f"https://{homepage_url}"
+                logger.info(f"Extracted and formatted homepage URL for {name}: {homepage_url}")
+                return homepage_url
+        
+        return None
+            
+    except Exception as e:
+        logger.error(f"LLM homepage extraction error: {e}")
+        return None
+
+def _is_tavily_answer_reliable(name: str, affiliation: str, answer: str, results: List[Dict[str, Any]], llm) -> bool:
+    """Check if Tavily's answer is reliable for homepage extraction.
+    
+    Args:
+        name: Person's name
+        affiliation: Institution name
+        answer: Tavily's answer summary
+        results: List of search result dictionaries
+        llm: LLM instance for evaluation
+        
+    Returns:
+        True if answer is reliable, False otherwise
+    """
+    try:
+        # Basic checks for answer quality
+        if not answer or len(answer.strip()) < 10:
+            logger.info(f"Answer too short or empty for {name}")
+            return False
+        
+        # Check for common unreliable indicators
+        unreliable_phrases = [
+            "i don't have", "i cannot find", "i'm not able to", "i'm unable to",
+            "no information", "not available", "cannot be found", "not found",
+            "i don't know", "unclear", "uncertain", "may not be accurate",
+            "i apologize", "sorry", "unfortunately", "however, i cannot"
+        ]
+        
+        answer_lower = answer.lower()
+        for phrase in unreliable_phrases:
+            if phrase in answer_lower:
+                logger.info(f"Found unreliable phrase '{phrase}' in answer for {name}")
+                return False
+        
+        # Check if answer contains relevant person/affiliation information
+        name_parts = name.lower().split()
+        affiliation_parts = affiliation.lower().split()
+        
+        # At least one name part should be mentioned in answer or results
+        name_mentioned = any(part in answer_lower for part in name_parts if len(part) > 2)
+        
+        if not name_mentioned:
+            # Check if name is mentioned in any of the top results
+            for result in results[:3]:
+                result_text = (result.get('title', '') + ' ' + result.get('content', '')).lower()
+                if any(part in result_text for part in name_parts if len(part) > 2):
+                    name_mentioned = True
+                    break
+        
+        if not name_mentioned:
+            logger.info(f"Person name not mentioned in answer or top results for {name}")
+            return False
+        
+        # Use LLM to evaluate answer reliability
+        reliability_prompt = (
+            "You are evaluating the reliability of a search result answer. "
+            "Analyze if the answer provides specific, factual information about the person's homepage. "
+            "Return 'RELIABLE' if the answer contains specific homepage information or clear references to the person. "
+            "Return 'UNRELIABLE' if the answer is vague, generic, or doesn't provide specific information."
+        )
+        
+        evaluation_prompt = (
+            f"Person: {name}\n"
+            f"Affiliation: {affiliation}\n"
+            f"Answer to evaluate: {answer}\n\n"
+            f"Is this answer reliable for finding {name}'s homepage? Respond with only 'RELIABLE' or 'UNRELIABLE':"
+        )
+        
+        messages = [
+            {"role": "system", "content": reliability_prompt},
+            {"role": "user", "content": evaluation_prompt}
+        ]
+        
+        response = llm.invoke(messages)
+        evaluation = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+        
+        is_reliable = evaluation.upper() == 'RELIABLE'
+        logger.info(f"LLM reliability evaluation for {name}: {evaluation} -> {is_reliable}")
+        
+        return is_reliable
+        
+    except Exception as e:
+        logger.error(f"Error evaluating answer reliability for {name}: {e}")
+        # Default to unreliable if evaluation fails
+        return False
+
 
 def _extract_role_with_llm(name: str, affiliation: str, answer: str, results: List[Dict[str, Any]]) -> Optional[str]:
     """Extract role information using LLM from search results.

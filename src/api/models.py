@@ -19,3 +19,21 @@ class SupplementRolesRequest(BaseModel):
     max_records: Optional[int] = Field(5000, description="Maximum number of records to process")
     start_id: Optional[int] = Field(None, description="Start ID for processing range (inclusive)")
     end_id: Optional[int] = Field(None, description="End ID for processing range (inclusive)")
+
+
+class DataEnrichmentRequest(BaseModel):
+    """Request model for data enrichment API."""
+    
+    batch_size: Optional[int] = Field(50, description="Number of records to process in each batch")
+    max_records: Optional[int] = Field(5000, description="Maximum number of records to process")
+    start_id: Optional[int] = Field(None, description="Start ID for processing range (inclusive)")
+    end_id: Optional[int] = Field(None, description="End ID for processing range (inclusive)")
+
+
+class ProcessRoleRequest(BaseModel):
+    """Request model for process role API."""
+    
+    batch_size: Optional[int] = Field(50, description="Number of records to process in each batch")
+    max_records: Optional[int] = Field(5000, description="Maximum number of records to process")
+    start_id: Optional[int] = Field(None, description="Start ID for processing range (inclusive)")
+    end_id: Optional[int] = Field(None, description="End ID for processing range (inclusive)")
