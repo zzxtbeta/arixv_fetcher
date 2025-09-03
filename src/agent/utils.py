@@ -1199,24 +1199,35 @@ def _get_tavily_semaphore():
     """Get or create Tavily API semaphore for concurrency control."""
     global _TAVILY_SEMAPHORE
     if _TAVILY_SEMAPHORE is None:
-        max_concurrency = int(os.getenv("TAVILY_MAX_CONCURRENCY", "3"))
+        max_concurrency = int(os.getenv("TAVILY_MAX_CONCURRENCY", "10"))
         _TAVILY_SEMAPHORE = asyncio.Semaphore(max_concurrency)
     return _TAVILY_SEMAPHORE
 
 async def _rate_limit_tavily_request():
-    """Apply rate limiting for Tavily API requests."""
+    """Apply optimized rate limiting for Tavily API requests with dynamic control."""
     global _LAST_TAVILY_REQUEST_TIME, _TAVILY_REQUEST_COUNT, _TAVILY_REQUEST_WINDOW_START
     
     current_time = time.time()
     
-    # Configuration from environment
-    request_delay = float(os.getenv("TAVILY_REQUEST_DELAY", "1.0"))
-    requests_per_minute = int(os.getenv("TAVILY_REQUESTS_PER_MINUTE", "30"))
+    # Optimized configuration from environment
+    request_delay = float(os.getenv("TAVILY_REQUEST_DELAY", "0.6"))  # Reduced from 1.0 to 0.6
+    requests_per_minute = int(os.getenv("TAVILY_REQUESTS_PER_MINUTE", "95"))  # Increased from 30 to 95
     
     # Check if we need to reset the request window (1 minute)
     if current_time - _TAVILY_REQUEST_WINDOW_START >= 60.0:
         _TAVILY_REQUEST_COUNT = 0
         _TAVILY_REQUEST_WINDOW_START = current_time
+    
+    # Dynamic rate limiting: if we're approaching the limit, slow down
+    remaining_requests = requests_per_minute - _TAVILY_REQUEST_COUNT
+    remaining_time = 60.0 - (current_time - _TAVILY_REQUEST_WINDOW_START)
+    
+    if remaining_requests <= 5 and remaining_time > 0:
+        # If we have 5 or fewer requests left, distribute them evenly over remaining time
+        dynamic_delay = max(request_delay, remaining_time / max(remaining_requests, 1))
+        if dynamic_delay > request_delay:
+            logger.info(f"Dynamic rate limiting: using delay {dynamic_delay:.2f}s (remaining: {remaining_requests} requests in {remaining_time:.1f}s)")
+            request_delay = dynamic_delay
     
     # Check if we've exceeded requests per minute
     if _TAVILY_REQUEST_COUNT >= requests_per_minute:
@@ -1253,6 +1264,109 @@ def is_quota_exceeded_error(error_msg: str) -> bool:
     ]
     error_lower = str(error_msg).lower()
     return any(indicator in error_lower for indicator in quota_indicators)
+
+
+async def batch_update_authors_homepage(db_manager, updates: List[Tuple[str, int]]) -> int:
+    """Batch update authors' homepage links to reduce database overhead.
+    
+    Args:
+        db_manager: Database manager instance
+        updates: List of (homepage_url, author_id) tuples
+        
+    Returns:
+        Number of successfully updated records
+    """
+    if not updates:
+        return 0
+    
+    try:
+        # Prepare batch update query
+        update_query = "UPDATE authors SET homepage = %s WHERE id = %s"
+        
+        async with db_manager.get_connection() as conn:
+            async with conn.cursor() as cur:
+                # Execute batch update
+                await cur.executemany(update_query, updates)
+                updated_count = cur.rowcount
+                
+        logger.info(f"Batch updated {updated_count} author homepage links")
+        return updated_count
+        
+    except Exception as e:
+        logger.error(f"Batch update failed: {e}")
+        return 0
+
+
+class ConcurrentTaskManager:
+    """Manager for concurrent Tavily API tasks with rate limiting and error handling."""
+    
+    def __init__(self, max_concurrent_workers: int = None):
+        self.max_workers = max_concurrent_workers or int(os.getenv("TAVILY_MAX_CONCURRENCY", "10"))
+        self.semaphore = asyncio.Semaphore(self.max_workers)
+        self.results = []
+        self.errors = []
+        self.quota_exhausted = False
+        
+    async def process_task(self, task_func, *args, **kwargs):
+        """Process a single task with concurrency control and error handling."""
+        async with self.semaphore:
+            if self.quota_exhausted:
+                return None
+                
+            try:
+                # Apply rate limiting before each task
+                await _rate_limit_tavily_request()
+                
+                # Execute the task
+                result = await task_func(*args, **kwargs)
+                
+                # Check for quota exhaustion
+                if result and result.get('error') == 'API quota exhausted':
+                    self.quota_exhausted = True
+                    logger.error("API quota exhausted, stopping concurrent processing")
+                    return None
+                    
+                return result
+                
+            except Exception as e:
+                error_msg = str(e).lower()
+                if is_quota_exceeded_error(error_msg):
+                    self.quota_exhausted = True
+                    logger.error(f"API quota exhausted: {e}")
+                    return None
+                else:
+                    self.errors.append(str(e))
+                    logger.error(f"Task failed: {e}")
+                    return None
+    
+    async def process_batch(self, tasks: List[Tuple]) -> List:
+        """Process a batch of tasks concurrently.
+        
+        Args:
+            tasks: List of (task_func, args, kwargs) tuples
+            
+        Returns:
+            List of results from successful tasks
+        """
+        if not tasks:
+            return []
+            
+        # Create coroutines for all tasks
+        coroutines = [
+            self.process_task(task_func, *args, **kwargs)
+            for task_func, args, kwargs in tasks
+        ]
+        
+        # Execute all tasks concurrently
+        results = await asyncio.gather(*coroutines, return_exceptions=True)
+        
+        # Filter successful results
+        successful_results = [
+            result for result in results 
+            if result is not None and not isinstance(result, Exception)
+        ]
+        
+        return successful_results
 
 def get_tavily_client() -> Optional[object]:
     """Get Tavily client instance."""

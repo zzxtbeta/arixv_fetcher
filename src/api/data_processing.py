@@ -14,7 +14,13 @@ from pydantic import BaseModel
 
 from src.agent.resume_manager import resume_manager
 from src.db.database import DatabaseManager
-from src.agent.utils import search_person_role_with_tavily, search_person_homepage_with_tavily, _extract_homepage_link_with_llm
+from src.agent.utils import (
+    search_person_role_with_tavily, 
+    search_person_homepage_with_tavily, 
+    _extract_homepage_link_with_llm,
+    batch_update_authors_homepage,
+    ConcurrentTaskManager
+)
 from .models import SupplementRolesRequest, DataEnrichmentRequest, ProcessRoleRequest
 
 logger = logging.getLogger(__name__)
@@ -1233,11 +1239,18 @@ async def data_enrichment_api(body: DataEnrichmentRequest):
         offset = 0
         api_quota_exhausted = False
         
-        # Process in batches
+        # Initialize concurrent task manager
+        task_manager = ConcurrentTaskManager()
+        
+        # Configure batch processing for concurrent execution
+        db_batch_size = int(os.getenv("DB_BATCH_SIZE", "15"))  # Database batch size for updates
+        concurrent_batch_size = min(batch_size, task_manager.max_workers * 2)  # Concurrent processing batch size
+        
+        # Process in batches with concurrent execution
         while offset < total_null_records and total_processed < max_records and not api_quota_exhausted:
             # Calculate actual batch size
             remaining_records = min(total_null_records - offset, max_records - total_processed)
-            current_batch_size = min(batch_size, remaining_records)
+            current_batch_size = min(concurrent_batch_size, remaining_records)
             
             # Query for authors without homepage links in the current batch
             query = f"""
@@ -1256,95 +1269,98 @@ async def data_enrichment_api(body: DataEnrichmentRequest):
                     await cur.execute(query, batch_params)
                     authors = await cur.fetchall()
             
-            logger.info(f"Processing batch {offset // batch_size + 1}: {len(authors)} authors")
+            logger.info(f"Processing batch {offset // concurrent_batch_size + 1}: {len(authors)} authors concurrently")
             
-            # Process each author in the batch
-            batch_processed = 0
+            # Prepare concurrent tasks for Tavily API calls
+            tasks = []
+            for author in authors:
+                author_id, author_name, aff_name = author[0], author[1], author[2] or "unknown affiliation"
+                tasks.append((
+                    search_person_homepage_with_tavily,
+                    (author_name, aff_name),
+                    {'author_id': author_id}
+                ))
+            
+            # Execute tasks concurrently
+            logger.info(f"Starting concurrent processing of {len(tasks)} tasks")
+            concurrent_results = await task_manager.process_batch([
+                (search_person_homepage_with_tavily, (author_name, aff_name), {})
+                for _, (author_name, aff_name), _ in tasks
+            ])
+            
+            # Check if quota was exhausted during concurrent processing
+            if task_manager.quota_exhausted:
+                api_quota_exhausted = True
+                logger.error("API quota exhausted during concurrent processing")
+                break
+            
+            # Process results and prepare database updates
+            batch_updates = []
+            batch_processed = len(authors)
             batch_updated = 0
             batch_failed = 0
             
-            for author in authors:
+            for i, (author, result) in enumerate(zip(authors, concurrent_results)):
                 try:
-                    author_id = author[0]
-                    author_name = author[1]
-                    aff_name = author[2] or "unknown affiliation"
+                    author_id, author_name, aff_name = author[0], author[1], author[2] or "unknown affiliation"
                     
-                    batch_processed += 1
-                    
-                    # Call Tavily API to search for homepage link
-                    search_result = await search_person_homepage_with_tavily(author_name, aff_name)
-                    
-                    if search_result and search_result.get('search_successful'):
+                    if result and result.get('search_successful'):
                         # Extract homepage link from Tavily response
-                        tavily_answer = search_result.get('answer', '')
+                        tavily_answer = result.get('answer', '')
                         
                         if tavily_answer:
                             # Use LLM to extract homepage link from Tavily response
-                            tavily_results = search_result.get('results', [])
+                            tavily_results = result.get('results', [])
                             extracted_link = _extract_homepage_link_with_llm(
                                 author_name, aff_name, tavily_answer, tavily_results
                             )
                             
                             if extracted_link:
                                 logger.info(f"Extracted homepage link for {author_name}: {extracted_link}")
-                                
-                                # Update author's homepage in database
-                                update_query = "UPDATE authors SET homepage = %s WHERE id = %s"
-                                async with db_manager.get_connection() as conn:
-                                    async with conn.cursor() as cur:
-                                        await cur.execute(update_query, [extracted_link, author_id])
-                                
+                                batch_updates.append((extracted_link, author_id))
                                 batch_updated += 1
-                                logger.info(f"Updated homepage for author {author_id}: {author_name}")
                             else:
                                 logger.info(f"LLM could not extract valid homepage link for {author_name}")
                         else:
                             logger.info(f"No homepage answer found for {author_name}")
                     else:
-                        # Check if search failed due to quota exhaustion
-                        if search_result and search_result.get('error') == 'API quota exhausted':
+                        if result and result.get('error') == 'API quota exhausted':
                             logger.error(f"Tavily API quota exhausted while processing {author_name}")
                             api_quota_exhausted = True
                             break
                         else:
-                            logger.warning(f"Homepage search failed for {author_name}: {search_result.get('error') if search_result else 'Unknown error'}")
-                    
-                    # Apply delay between requests
-                    await asyncio.sleep(batch_delay)
-                    
-                    # Check if we've reached the max_records limit
-                    if (total_processed + batch_processed) >= max_records:
-                        logger.info(f"Reached max_records limit ({max_records}), stopping processing")
-                        break
+                            logger.warning(f"Homepage search failed for {author_name}: {result.get('error') if result else 'No result'}")
+                            batch_failed += 1
                 
                 except Exception as e:
-                    batch_processed += 1
-                    error_msg = str(e).lower()
-                    # Check for API quota exhaustion
-                    if "quota" in error_msg or "limit" in error_msg or "exceeded" in error_msg:
-                        logger.error(f"Tavily API quota exhausted: {e}")
-                        api_quota_exhausted = True
-                        break
-                    else:
-                        batch_failed += 1
-                        logger.error(f"Error processing {author_name} at {aff_name}: {e}")
+                    batch_failed += 1
+                    logger.error(f"Error processing result for {author_name}: {e}")
+            
+            # Perform batch database updates
+            if batch_updates:
+                # Split updates into smaller batches for database efficiency
+                for db_batch_start in range(0, len(batch_updates), db_batch_size):
+                    db_batch_end = min(db_batch_start + db_batch_size, len(batch_updates))
+                    db_batch = batch_updates[db_batch_start:db_batch_end]
                     
-                    # Check if we've reached the max_records limit
-                    if (total_processed + batch_processed) >= max_records:
-                        logger.info(f"Reached max_records limit ({max_records}), stopping processing")
-                        break
+                    updated_count = await batch_update_authors_homepage(db_manager, db_batch)
+                    logger.info(f"Database batch update: {updated_count} records updated")
             
             # Update counters
             total_processed += batch_processed
             total_updated += batch_updated
             total_failed += batch_failed
-            offset += batch_size
+            offset += concurrent_batch_size
             
-            logger.info(f"Batch completed: {batch_updated} updated, {batch_failed} failed")
+            logger.info(f"Concurrent batch completed: {batch_updated} updated, {batch_failed} failed, {len(task_manager.errors)} errors")
             
             # Break if API quota is exhausted
             if api_quota_exhausted:
                 break
+            
+            # Apply a small delay between batches to prevent overwhelming the system
+            if offset < total_null_records:
+                await asyncio.sleep(float(os.getenv("TAVILY_BATCH_DELAY", "0.1")))
         
         # Prepare response
         status = "completed" if not api_quota_exhausted else "quota_exhausted"
