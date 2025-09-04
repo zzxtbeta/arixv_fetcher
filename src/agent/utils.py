@@ -1878,3 +1878,344 @@ def _extract_role_with_llm(name: str, affiliation: str, answer: str, results: Li
     except Exception as e:
         logger.error(f"LLM role extraction error: {e}")
         return None
+
+
+# ---------------------- Web crawling and email extraction utilities ----------------------
+
+async def crawl_homepage(url: str, timeout: int = 30) -> Optional[str]:
+    """Crawl a homepage URL and extract text content.
+    
+    Args:
+        url: The homepage URL to crawl
+        timeout: Request timeout in seconds
+        
+    Returns:
+        Extracted text content or None if failed
+    """
+    if not url or not url.strip():
+        logger.warning("Empty URL provided for crawling")
+        return None
+        
+    # Normalize URL
+    url = url.strip()
+    if not url.startswith(('http://', 'https://')):
+        url = f"https://{url}"
+        
+    logger.info(f"Crawling homepage: {url}")
+    
+    try:
+        # Use existing session or create new one
+        session = get_pdf_session()  # Reuse existing session
+        
+        # Make request with timeout
+        response = session.get(url, timeout=timeout, headers=HTTP_HEADERS)
+        response.raise_for_status()
+        
+        # Get content type
+        content_type = response.headers.get('content-type', '').lower()
+        
+        if 'text/html' not in content_type:
+            logger.warning(f"Non-HTML content type: {content_type}")
+            return None
+            
+        # Extract text content and mailto links
+        html_content = response.text
+        
+        # Enhanced text extraction with mailto link support
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Extract mailto links before removing scripts
+            mailto_links = []
+            for link in soup.find_all('a', href=True):
+                href = link.get('href', '')
+                if href.startswith('mailto:'):
+                    email = href.replace('mailto:', '').split('?')[0]  # Remove query parameters
+                    if email:
+                        mailto_links.append(email)
+                        logger.info(f"Found mailto link: {email}")
+            
+            # Remove script and style elements
+            for script in soup(["script", "style"]):
+                script.decompose()
+                
+            # Get text content
+            text_content = soup.get_text()
+            
+            # Clean up text
+            lines = (line.strip() for line in text_content.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text_content = ' '.join(chunk for chunk in chunks if chunk)
+            
+            # Add mailto links to the text content for LLM processing
+            if mailto_links:
+                mailto_section = "\n\nMAILTO LINKS FOUND:\n" + "\n".join(f"Email: {email}" for email in mailto_links)
+                text_content += mailto_section
+                logger.info(f"Added {len(mailto_links)} mailto links to content")
+            
+            # Limit content length to avoid overwhelming LLM
+            max_length = 8000  # Reasonable limit for LLM processing
+            if len(text_content) > max_length:
+                text_content = text_content[:max_length] + "..."
+                
+            logger.info(f"Successfully crawled {len(text_content)} characters from {url}")
+            return text_content
+            
+        except ImportError:
+            # Fallback: simple regex-based text extraction with mailto support
+            import re
+            
+            # Extract mailto links using regex
+            mailto_pattern = r'href=["\']mailto:([^"\'>?]+)'
+            mailto_matches = re.findall(mailto_pattern, html_content, re.IGNORECASE)
+            mailto_links = [email.strip() for email in mailto_matches if email.strip()]
+            
+            if mailto_links:
+                logger.info(f"Found {len(mailto_links)} mailto links (fallback): {mailto_links}")
+            
+            # Remove HTML tags
+            text_content = re.sub(r'<[^>]+>', ' ', html_content)
+            # Clean up whitespace
+            text_content = re.sub(r'\s+', ' ', text_content).strip()
+            
+            # Add mailto links to the text content for LLM processing
+            if mailto_links:
+                mailto_section = "\n\nMAILTO LINKS FOUND:\n" + "\n".join(f"Email: {email}" for email in mailto_links)
+                text_content += mailto_section
+                logger.info(f"Added {len(mailto_links)} mailto links to content (fallback)")
+            
+            # Limit content length
+            max_length = 8000
+            if len(text_content) > max_length:
+                text_content = text_content[:max_length] + "..."
+                
+            logger.info(f"Successfully crawled {len(text_content)} characters from {url} (fallback)")
+            return text_content
+            
+    except requests.exceptions.Timeout:
+        logger.error(f"Timeout crawling {url}")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request error crawling {url}: {str(e)}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error crawling {url}: {str(e)}")
+        return None
+
+
+async def extract_email_and_dates_with_llm(webpage_content: str, author_name: str) -> Optional[Dict[str, Any]]:
+    """Extract email address and affiliation dates from webpage content using LLM.
+    
+    Args:
+        webpage_content: Text content from the author's homepage
+        author_name: Name of the author for context
+        
+    Returns:
+        Dict containing extracted email and multiple affiliations with dates or None if extraction failed
+    """
+    if not webpage_content or not author_name:
+        logger.warning("Missing webpage content or author name for extraction")
+        return None
+        
+    logger.info(f"Extracting email and dates for {author_name} from {len(webpage_content)} characters")
+    
+    try:
+        llm = create_llm()
+        
+        # Construct enhanced prompt for multi-affiliation extraction with mailto support
+        prompt = f"""
+You are an expert at extracting contact information and career timeline data from academic webpages.
+
+Author Name: {author_name}
+
+Webpage Content:
+{webpage_content}
+
+Please analyze the webpage content and extract the following information for {author_name}:
+
+1. Email Address: Look for any email addresses that belong to {author_name}
+2. Career History: Extract ALL institutional affiliations with their corresponding time periods
+
+For EMAIL EXTRACTION, pay special attention to:
+- Direct email addresses in text (e.g., john.smith@university.edu)
+- Email addresses from mailto: links (look for "MAILTO LINKS FOUND:" section)
+- Contact information sections
+- Email addresses that may be obfuscated or partially hidden
+- Multiple email addresses if the person has changed institutions
+
+For each affiliation, identify:
+- Institution name (university, company, research institute, etc.)
+- Position/role (if mentioned)
+- Start date (when they joined)
+- End date (when they left, or "present" if current)
+
+IMPORTANT INSTRUCTIONS:
+- Only extract information if you are confident it belongs to {author_name}
+- PRIORITIZE email addresses found in "MAILTO LINKS FOUND:" section as these are from clickable email links
+- Look for career progression, education history, work experience sections
+- For dates, look for phrases like "joined in", "since", "from", "until", "2020-present", "2018-2022", etc.
+- Return dates in YYYY-MM-DD format if possible, or YYYY format if only year is available
+- If information is unclear or not found, return "None" for that field
+- Be conservative - if you're not sure, return "None"
+- Extract multiple affiliations if the person has worked at different institutions
+- Pay attention to chronological order and overlapping positions
+- If multiple email addresses are found, choose the most current/relevant one
+
+Respond in the following JSON format:
+{{
+    "email": "email@domain.com or None",
+    "affiliations": [
+        {{
+            "institution": "Institution Name",
+            "position": "Position/Role or None",
+            "start_date": "YYYY-MM-DD or YYYY or None",
+            "end_date": "YYYY-MM-DD or YYYY or present or None"
+        }}
+    ],
+    "confidence": "high/medium/low"
+}}
+
+Extract the information:"""
+        
+        # Get LLM response
+        response = llm.invoke(prompt)
+        response_text = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+        
+        logger.info(f"LLM response for {author_name}: {response_text[:200]}...")
+        
+        # Parse JSON response
+        try:
+            import json
+            # Extract JSON from response if it contains other text
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            
+            if json_start >= 0 and json_end > json_start:
+                json_text = response_text[json_start:json_end]
+                extracted_data = json.loads(json_text)
+                
+                # Validate and clean extracted data
+                result = {}
+                
+                # Process email
+                email = extracted_data.get('email', '').strip()
+                if email and email.lower() not in ['none', 'null', 'unknown', '']:
+                    # Basic email validation
+                    import re
+                    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+                    if re.match(email_pattern, email):
+                        result['email'] = email
+                        logger.info(f"Extracted email for {author_name}: {email}")
+                    else:
+                        logger.warning(f"Invalid email format extracted: {email}")
+                        result['email'] = None
+                else:
+                    result['email'] = None
+                
+                # Process affiliations
+                affiliations = extracted_data.get('affiliations', [])
+                validated_affiliations = []
+                
+                for affiliation in affiliations:
+                    if isinstance(affiliation, dict):
+                        cleaned_affiliation = {
+                            'institution': affiliation.get('institution', '').strip(),
+                            'position': affiliation.get('position', '').strip(),
+                            'start_date': affiliation.get('start_date', '').strip(),
+                            'end_date': affiliation.get('end_date', '').strip()
+                        }
+                        
+                        # Convert empty strings and "None" to None
+                        for key in ['institution', 'position', 'start_date', 'end_date']:
+                            if not cleaned_affiliation[key] or cleaned_affiliation[key].lower() in ['none', 'null', 'unknown']:
+                                cleaned_affiliation[key] = None
+                        
+                        # Enhanced date validation
+                        import re
+                        from datetime import datetime
+                        
+                        for date_key in ['start_date', 'end_date']:
+                            if cleaned_affiliation[date_key]:
+                                date_value = cleaned_affiliation[date_key]
+                                
+                                # Check if it's "present" (valid for end_date)
+                                if date_value.lower() == 'present':
+                                    if date_key == 'end_date':
+                                        cleaned_affiliation[date_key] = 'present'
+                                    else:
+                                        logger.warning(f"'present' is not valid for {date_key}, setting to None")
+                                        cleaned_affiliation[date_key] = None
+                                    continue
+                                
+                                # Validate date format (YYYY or YYYY-MM-DD)
+                                if not re.match(r'^\d{4}(-\d{2}(-\d{2})?)?$', date_value):
+                                    logger.warning(f"Invalid date format extracted for {date_key}: {date_value}")
+                                    cleaned_affiliation[date_key] = None
+                                    continue
+                                
+                                # Validate date range (reasonable academic career dates)
+                                try:
+                                    if len(date_value) == 4:  # YYYY format
+                                        year = int(date_value)
+                                    else:  # YYYY-MM-DD format
+                                        year = int(date_value.split('-')[0])
+                                    
+                                    current_year = datetime.now().year
+                                    if year < 1950 or year > current_year + 5:
+                                        logger.warning(f"Date year {year} is outside reasonable range (1950-{current_year+5})")
+                                        cleaned_affiliation[date_key] = None
+                                        continue
+                                        
+                                except ValueError:
+                                    logger.warning(f"Failed to parse year from date: {date_value}")
+                                    cleaned_affiliation[date_key] = None
+                        
+                        # Validate date logic (start_date should be before end_date)
+                        start_date = cleaned_affiliation.get('start_date')
+                        end_date = cleaned_affiliation.get('end_date')
+                        
+                        if start_date and end_date and end_date != 'present':
+                            try:
+                                # Convert to comparable format (use year for comparison)
+                                start_year = int(start_date.split('-')[0]) if start_date else 0
+                                end_year = int(end_date.split('-')[0]) if end_date else 9999
+                                
+                                if start_year > end_year:
+                                    logger.warning(f"Start date {start_date} is after end date {end_date}, swapping them")
+                                    cleaned_affiliation['start_date'] = end_date
+                                    cleaned_affiliation['end_date'] = start_date
+                                    
+                            except ValueError:
+                                logger.warning(f"Failed to compare dates: start={start_date}, end={end_date}")
+                        
+                        # Only add affiliation if it has at least institution name
+                        if cleaned_affiliation['institution']:
+                            validated_affiliations.append(cleaned_affiliation)
+                            logger.info(f"Extracted affiliation for {author_name}: {cleaned_affiliation}")
+                
+                result['affiliations'] = validated_affiliations
+                
+                # Add confidence level
+                confidence = extracted_data.get('confidence', 'low')
+                result['confidence'] = confidence
+                
+                # Only return result if we extracted at least email or one affiliation
+                if result.get('email') or result.get('affiliations'):
+                    logger.info(f"Successfully extracted data for {author_name}: {result}")
+                    return result
+                else:
+                    logger.info(f"No valid data extracted for {author_name}")
+                    return None
+                    
+            else:
+                logger.error(f"No valid JSON found in LLM response for {author_name}")
+                return None
+                
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error for {author_name}: {str(e)}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"LLM extraction error for {author_name}: {str(e)}")
+        return None

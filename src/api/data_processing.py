@@ -14,14 +14,41 @@ from pydantic import BaseModel
 
 from src.agent.resume_manager import resume_manager
 from src.db.database import DatabaseManager
+from src.db.supabase_client import supabase_client
 from src.agent.utils import (
     search_person_role_with_tavily, 
     search_person_homepage_with_tavily, 
     _extract_homepage_link_with_llm,
     batch_update_authors_homepage,
-    ConcurrentTaskManager
+    ConcurrentTaskManager,
+    crawl_homepage,
+    extract_email_and_dates_with_llm
 )
-from .models import SupplementRolesRequest, DataEnrichmentRequest, ProcessRoleRequest
+
+def normalize_date_for_db(date_str: str) -> str:
+    """
+    Convert date string to PostgreSQL compatible format.
+    YYYY -> YYYY-01-01
+    YYYY-MM -> YYYY-MM-01
+    YYYY-MM-DD -> YYYY-MM-DD (unchanged)
+    """
+    if not date_str or date_str.lower() == 'present':
+        return date_str
+    
+    # Remove any whitespace
+    date_str = date_str.strip()
+    
+    # YYYY format -> YYYY-01-01
+    if len(date_str) == 4 and date_str.isdigit():
+        return f"{date_str}-01-01"
+    
+    # YYYY-MM format -> YYYY-MM-01
+    if len(date_str) == 7 and date_str[4] == '-':
+        return f"{date_str}-01"
+    
+    # YYYY-MM-DD format (already valid)
+    return date_str
+from .models import SupplementRolesRequest, DataEnrichmentRequest, ProcessRoleRequest, EmailSupplementRequest
 
 logger = logging.getLogger(__name__)
 
@@ -631,11 +658,12 @@ async def enrich_orcid_api(
                                 pass
                         if res.get("start_date"):
                             try:
+                                normalized_start_date = normalize_date_for_db(res["start_date"])
                                 if only_missing:
                                     # Use LEAST to keep the earliest date, only update if NULL
                                     await cur.execute(
                                         "UPDATE author_affiliation SET start_date = LEAST(COALESCE(start_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
-                                        (res["start_date"], res["start_date"], author_id, aff_id),
+                                        (normalized_start_date, normalized_start_date, author_id, aff_id),
                                     )
                                     # Count only if originally NULL
                                     if not sd0:
@@ -644,7 +672,7 @@ async def enrich_orcid_api(
                                     # Direct overwrite with earliest date
                                     await cur.execute(
                                         "UPDATE author_affiliation SET start_date = LEAST(COALESCE(start_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
-                                        (res["start_date"], res["start_date"], author_id, aff_id),
+                                        (normalized_start_date, normalized_start_date, author_id, aff_id),
                                     )
                                     # Count all updates in overwrite mode
                                     start_updated += 1
@@ -652,11 +680,12 @@ async def enrich_orcid_api(
                                 pass
                         if res.get("end_date"):
                             try:
+                                normalized_end_date = normalize_date_for_db(res["end_date"])
                                 if only_missing:
                                     # Use GREATEST to keep the latest date, only update if NULL
                                     await cur.execute(
                                         "UPDATE author_affiliation SET end_date = GREATEST(COALESCE(end_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
-                                        (res["end_date"], res["end_date"], author_id, aff_id),
+                                        (normalized_end_date, normalized_end_date, author_id, aff_id),
                                     )
                                     # Count only if originally NULL
                                     if not ed0:
@@ -665,7 +694,7 @@ async def enrich_orcid_api(
                                     # Direct overwrite with latest date
                                     await cur.execute(
                                         "UPDATE author_affiliation SET end_date = GREATEST(COALESCE(end_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
-                                        (res["end_date"], res["end_date"], author_id, aff_id),
+                                        (normalized_end_date, normalized_end_date, author_id, aff_id),
                                     )
                                     # Count all updates in overwrite mode
                                     end_updated += 1
@@ -792,16 +821,18 @@ async def enrich_orcid_for_author(request: Request, author_id: int) -> dict:
                                 
                                 # Update start_date (keep earliest)
                                 if start_date:
+                                    normalized_start_date = normalize_date_for_db(start_date)
                                     await cur.execute(
                                         "UPDATE author_affiliation SET start_date = LEAST(COALESCE(start_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
-                                        (start_date, start_date, author_id, aff_id)
+                                        (normalized_start_date, normalized_start_date, author_id, aff_id)
                                     )
                                 
                                 # Update end_date (keep latest)
                                 if end_date:
+                                    normalized_end_date = normalize_date_for_db(end_date)
                                     await cur.execute(
                                         "UPDATE author_affiliation SET end_date = GREATEST(COALESCE(end_date, %s), %s) WHERE author_id = %s AND affiliation_id = %s",
-                                        (end_date, end_date, author_id, aff_id)
+                                        (normalized_end_date, normalized_end_date, author_id, aff_id)
                                     )
         
         return {
@@ -1574,3 +1605,349 @@ async def process_role_api(body: ProcessRoleRequest):
     except Exception as e:
         logger.error(f"Error in role processing: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Role processing failed: {str(e)}")
+
+
+@router.post("/email-supplement")
+async def email_supplement_api(body: EmailSupplementRequest):
+    """Supplement email fields for authors by crawling their homepages and using LLM extraction.
+    
+    This endpoint processes authors with empty email fields but non-empty homepage fields.
+    It crawls the homepage content and uses LLM to extract email addresses and affiliation dates.
+    
+    Args:
+        body: EmailSupplementRequest containing batch_size, start_id, end_id
+        
+    Returns:
+        dict: Processing results including total_processed, total_updated, total_failed
+    """
+    logger.info("=== EMAIL SUPPLEMENT API CALLED ===")
+    logger.info(f"Request parameters: batch_size={body.batch_size}, start_id={body.start_id}, end_id={body.end_id}")
+    
+    try:
+        # Build filters for authors with empty email but non-empty homepage
+        filters = {}
+        
+        # Get authors to process using supabase_client with pagination
+        # Use pagination to handle large datasets
+        authors = []
+        page_size = 1000  # Process in chunks of 1000
+        offset = 0
+        
+        while True:
+            # Get a batch of authors
+            batch_authors = supabase_client.select(
+                table="authors",
+                columns="id, author_name_en, homepage, email",
+                limit=page_size,
+                offset=offset,
+                order_by=("id", True)  # Order by ID ascending
+            )
+            
+            if not batch_authors:
+                break  # No more data
+                
+            # Filter authors with empty email but non-empty homepage
+            for author in batch_authors:
+                email = author.get('email')
+                homepage = author.get('homepage')
+                author_id = author.get('id')
+                
+                # Check if email is empty and homepage is not empty
+                if (not email or email.strip() == '') and homepage and homepage.strip():
+                    # Apply ID range filters if specified
+                    if body.start_id is not None and author_id < body.start_id:
+                        continue
+                    if body.end_id is not None and author_id > body.end_id:
+                        continue
+                        
+                    # Convert to tuple format for compatibility with existing code
+                    authors.append((author_id, author.get('author_name_en'), homepage))
+            
+            # If we got less than page_size, we've reached the end
+            if len(batch_authors) < page_size:
+                break
+                
+            offset += page_size
+            logger.info(f"Processed {offset} authors, found {len(authors)} candidates so far")
+        
+        # Sort by ID
+        authors.sort(key=lambda x: x[0])
+            
+        logger.info(f"Found {len(authors)} authors to process")
+        
+        if not authors:
+            logger.info("No authors found matching criteria")
+            return {
+                "success": True,
+                "message": "No authors found with empty email but non-empty homepage",
+                "total_processed": 0,
+                "total_updated": 0,
+                "total_failed": 0
+            }
+            
+        logger.info(f"Found {len(authors)} authors to process")
+        
+        # Process in batches
+        batch_size = body.batch_size or 10
+        total_processed = 0
+        total_updated = 0
+        total_failed = 0
+        
+        for i in range(0, len(authors), batch_size):
+            batch = authors[i:i + batch_size]
+            logger.info(f"Processing batch {i//batch_size + 1}: {len(batch)} authors")
+            
+            # Process each author in the batch
+            for author in batch:
+                author_id = author[0]
+                author_name = author[1]
+                homepage = author[2]
+                
+                try:
+                    logger.info(f"Processing author {author_id}: {author_name} - {homepage}")
+                    
+                    # Step 1: Crawl homepage content
+                    webpage_content = await crawl_homepage(homepage)
+                    
+                    if not webpage_content:
+                        logger.warning(f"Failed to crawl homepage for author {author_id}: {homepage}")
+                        total_failed += 1
+                        continue
+                    
+                    # Step 2: Extract email and dates using LLM
+                    extracted_data = await extract_email_and_dates_with_llm(webpage_content, author_name)
+                    
+                    if not extracted_data:
+                        logger.info(f"No data extracted for author {author_id}")
+                        total_processed += 1
+                        continue
+                    
+                    # Step 3: Update database if we have valid data
+                    updated_fields = []
+                    
+                    # Update email if extracted and confidence is not low
+                    email = extracted_data.get('email')
+                    confidence = extracted_data.get('confidence', 'low')
+                    
+                    if email and confidence in ['high', 'medium']:
+                        try:
+                            supabase_client.update(
+                                table="authors",
+                                values={"email": email},
+                                filters={"id": author_id}
+                            )
+                            updated_fields.append(f"email: {email}")
+                            logger.info(f"Updated email for author {author_id}: {email}")
+                        except Exception as e:
+                            logger.error(f"Failed to update email for author {author_id}: {str(e)}")
+                    
+                    # Update affiliation dates if extracted
+                    affiliations_data = extracted_data.get('affiliations', [])
+                    
+                    # Validate affiliations data structure
+                    if affiliations_data and not isinstance(affiliations_data, list):
+                        logger.error(f"Invalid affiliations data type for author {author_id}: expected list, got {type(affiliations_data)}")
+                        affiliations_data = []
+                    
+                    if affiliations_data and confidence in ['high', 'medium']:
+                        try:
+                            # Get author's existing affiliations with institution names
+                            existing_affiliations = supabase_client.select(
+                                table="author_affiliation",
+                                columns="id, affiliation_id, start_date, end_date",
+                                filters={"author_id": author_id}
+                            )
+                            
+                            # Get affiliation names for matching
+                            affiliation_names = {}
+                            if existing_affiliations:
+                                aff_ids = [aff['affiliation_id'] for aff in existing_affiliations if aff['affiliation_id']]
+                                if aff_ids:
+                                    affiliations_info = supabase_client.select(
+                                        table="affiliations",
+                                        columns="id, aff_name",
+                                        filters={"id": aff_ids}
+                                    )
+                                    affiliation_names = {aff['id']: aff['aff_name'] for aff in affiliations_info}
+                            
+                            # Process each extracted affiliation with validation
+                            validation_errors = []
+                            
+                            for i, extracted_aff in enumerate(affiliations_data):
+                                try:
+                                    # Validate affiliation data structure
+                                    if not isinstance(extracted_aff, dict):
+                                        validation_errors.append(f"Affiliation {i}: expected dict, got {type(extracted_aff)}")
+                                        continue
+                                    
+                                    institution = extracted_aff.get('institution', '').strip()
+                                    start_date = extracted_aff.get('start_date')
+                                    end_date = extracted_aff.get('end_date')
+                                    position = extracted_aff.get('position', '').strip()
+                                    
+                                    # Validate required fields
+                                    if not institution:
+                                        validation_errors.append(f"Affiliation {i}: missing or empty institution name")
+                                        continue
+                                    
+                                    # Validate date formats
+                                    import re
+                                    for date_field, date_value in [('start_date', start_date), ('end_date', end_date)]:
+                                        if date_value and date_value != 'present':
+                                            if not re.match(r'^\d{4}(-\d{2}(-\d{2})?)?$', str(date_value)):
+                                                validation_errors.append(f"Affiliation {i}: invalid {date_field} format: {date_value}")
+                                                # Set to None to skip this date field
+                                                if date_field == 'start_date':
+                                                    start_date = None
+                                                else:
+                                                    end_date = None
+                                
+                                except Exception as validation_error:
+                                    validation_errors.append(f"Affiliation {i}: validation error - {str(validation_error)}")
+                                    continue
+                                
+                                # Try to match with existing affiliations by institution name
+                                matched_aff = None
+                                try:
+                                    # Define common institution name mappings
+                                    institution_mappings = {
+                                        'massachusetts institute of technology': 'mit',
+                                        'mit': 'massachusetts institute of technology',
+                                        'stanford university': 'stanford',
+                                        'stanford': 'stanford university',
+                                        'harvard university': 'harvard',
+                                        'harvard': 'harvard university',
+                                        'university of california': 'uc',
+                                        'uc': 'university of california',
+                                        'carnegie mellon university': 'cmu',
+                                        'cmu': 'carnegie mellon university'
+                                    }
+                                    
+                                    extracted_name_lower = institution.lower()
+                                    
+                                    for existing_aff in existing_affiliations:
+                                        aff_id = existing_aff['affiliation_id']
+                                        if aff_id and aff_id in affiliation_names:
+                                            existing_name_lower = affiliation_names[aff_id].lower()
+                                            
+                                            # Exact match
+                                            if extracted_name_lower == existing_name_lower:
+                                                matched_aff = existing_aff
+                                                logger.debug(f"Exact match: '{institution}' with '{affiliation_names[aff_id]}'")
+                                                break
+                                            
+                                            # Substring match
+                                            if (extracted_name_lower in existing_name_lower or 
+                                                existing_name_lower in extracted_name_lower):
+                                                matched_aff = existing_aff
+                                                logger.debug(f"Substring match: '{institution}' with '{affiliation_names[aff_id]}'")
+                                                break
+                                            
+                                            # Mapping-based match
+                                            if extracted_name_lower in institution_mappings:
+                                                mapped_name = institution_mappings[extracted_name_lower]
+                                                if mapped_name in existing_name_lower or existing_name_lower in mapped_name:
+                                                    matched_aff = existing_aff
+                                                    logger.debug(f"Mapping match: '{institution}' -> '{mapped_name}' with '{affiliation_names[aff_id]}'")
+                                                    break
+                                            
+                                            if existing_name_lower in institution_mappings:
+                                                mapped_name = institution_mappings[existing_name_lower]
+                                                if mapped_name in extracted_name_lower or extracted_name_lower in mapped_name:
+                                                    matched_aff = existing_aff
+                                                    logger.debug(f"Reverse mapping match: '{institution}' with '{affiliation_names[aff_id]}' -> '{mapped_name}'")
+                                                    break
+                                            
+                                            # Keyword-based match (words longer than 3 characters)
+                                            extracted_words = [word for word in extracted_name_lower.split() if len(word) > 3]
+                                            existing_words = [word for word in existing_name_lower.split() if len(word) > 3]
+                                            
+                                            if extracted_words and existing_words:
+                                                common_words = set(extracted_words) & set(existing_words)
+                                                if common_words:
+                                                    matched_aff = existing_aff
+                                                    logger.debug(f"Keyword match: '{institution}' with '{affiliation_names[aff_id]}' (common: {common_words})")
+                                                    break
+                                                    
+                                except Exception as matching_error:
+                                    logger.error(f"Error during institution matching for author {author_id}: {str(matching_error)}")
+                                    validation_errors.append(f"Institution matching error: {str(matching_error)}")
+                                
+                                # Update matched affiliation or use the most recent one as fallback
+                                target_aff = matched_aff
+                                if not target_aff and existing_affiliations:
+                                    # Use most recent affiliation as fallback
+                                    target_aff = max(existing_affiliations, key=lambda x: x['id'])
+                                
+                                if target_aff:
+                                    try:
+                                        update_values = {}
+                                        
+                                        # Only update if we have new information
+                                        if start_date and start_date != 'present':
+                                            normalized_start_date = normalize_date_for_db(start_date)
+                                            update_values["start_date"] = normalized_start_date
+                                            updated_fields.append(f"start_date: {normalized_start_date} (institution: {institution})")
+                                            
+                                        if end_date and end_date != 'present':
+                                            normalized_end_date = normalize_date_for_db(end_date)
+                                            update_values["end_date"] = normalized_end_date
+                                            updated_fields.append(f"end_date: {normalized_end_date} (institution: {institution})")
+                                        elif end_date == 'present':
+                                            # Set end_date to None for current positions
+                                            update_values["end_date"] = None
+                                            updated_fields.append(f"end_date: current (institution: {institution})")
+                                            
+                                        if update_values:
+                                            supabase_client.update(
+                                                table="author_affiliation",
+                                                values=update_values,
+                                                filters={"id": target_aff['id']}
+                                            )
+                                            logger.info(f"Updated affiliation {target_aff['id']} for author {author_id}: {institution}")
+                                        else:
+                                            logger.debug(f"No date updates needed for affiliation {target_aff['id']} (institution: {institution})")
+                                            
+                                    except Exception as update_error:
+                                        logger.error(f"Database update failed for affiliation {target_aff['id']}: {str(update_error)}")
+                                        validation_errors.append(f"Database update failed for {institution}: {str(update_error)}")
+                                else:
+                                    logger.warning(f"No matching affiliation found for author {author_id} and institution {institution}")
+                            
+                            # Log validation errors if any
+                            if validation_errors:
+                                logger.warning(f"Validation errors for author {author_id}: {'; '.join(validation_errors)}")
+                                    
+                        except Exception as e:
+                            logger.error(f"Failed to update affiliation dates for author {author_id}: {str(e)}")
+                    
+                    if updated_fields:
+                        total_updated += 1
+                        logger.info(f"Successfully updated author {author_id}: {', '.join(updated_fields)}")
+                    
+                    total_processed += 1
+                    
+                except Exception as e:
+                    logger.error(f"Failed to process author {author_id}: {str(e)}")
+                    total_failed += 1
+                    
+            # Add small delay between batches to avoid overwhelming the system
+            if i + batch_size < len(authors):
+                await asyncio.sleep(1)
+                
+        logger.info(f"Email supplement completed: processed={total_processed}, updated={total_updated}, failed={total_failed}")
+        
+        return {
+            "success": True,
+            "message": f"Email supplement completed successfully",
+            "total_processed": total_processed,
+            "total_updated": total_updated,
+            "total_failed": total_failed,
+            "details": f"Processed {total_processed} authors, updated {total_updated} records, {total_failed} failed"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in email supplement: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Email supplement failed: {str(e)}")

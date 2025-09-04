@@ -37,3 +37,11 @@ class ProcessRoleRequest(BaseModel):
     max_records: Optional[int] = Field(5000, description="Maximum number of records to process")
     start_id: Optional[int] = Field(None, description="Start ID for processing range (inclusive)")
     end_id: Optional[int] = Field(None, description="End ID for processing range (inclusive)")
+
+
+class EmailSupplementRequest(BaseModel):
+    """Request model for email supplement API."""
+    
+    batch_size: Optional[int] = Field(10, description="Number of records to process in each batch")
+    start_id: Optional[int] = Field(None, description="Start ID for processing range (inclusive)")
+    end_id: Optional[int] = Field(None, description="End ID for processing range (inclusive)")

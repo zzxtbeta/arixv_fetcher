@@ -454,3 +454,12 @@ export async function processRole(params: {
     failed_count: number
   }
 }
+
+export async function emailSupplement(params: {
+  batch_size?: number
+  start_id?: number
+  end_id?: number
+}) {
+  const { data } = await api.post('/data/email-supplement', params)
+  return data as { total_processed: number; total_updated: number; total_failed: number; message?: string }
+}

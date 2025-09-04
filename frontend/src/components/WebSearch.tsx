@@ -64,6 +64,8 @@ export default function WebSearchComponent() {
     }
   }
 
+
+
   const clearResults = () => {
     setSearchResult(null)
     setRoleResult(null)
@@ -182,6 +184,8 @@ export default function WebSearchComponent() {
             Clear Results
           </Button>
         </Space>
+
+
       </Space>
 
       <Divider />
@@ -269,6 +273,8 @@ export default function WebSearchComponent() {
               )}
             </div>
           )}
+
+
         </div>
       )}
 

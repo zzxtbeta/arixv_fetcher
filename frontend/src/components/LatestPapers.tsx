@@ -1,7 +1,7 @@
 import { Card, List, Typography, Space, Tag, Pagination, Button, InputNumber, Select, message, Input, DatePicker, Upload, Tooltip } from 'antd'
 import { UploadOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
-import { getLatestPapers, triggerFetch, triggerFetchById, supplementRoles, dataEnrichment, processRole } from '../api'
+import { getLatestPapers, triggerFetch, triggerFetchById, supplementRoles, dataEnrichment, processRole, emailSupplement } from '../api'
 import dayjs from 'dayjs'
 import PaperSearch from './PaperSearch'
 
@@ -37,6 +37,12 @@ export default function LatestPapers() {
   const [processingRole, setProcessingRole] = useState(false)
   const [processStartId, setProcessStartId] = useState<number | undefined>(1)
   const [processEndId, setProcessEndId] = useState<number | undefined>(undefined)
+  
+  // Email Supplement states
+  const [emailSupplementing, setEmailSupplementing] = useState(false)
+  const [emailStartId, setEmailStartId] = useState<number | undefined>(1)
+  const [emailEndId, setEmailEndId] = useState<number | undefined>(undefined)
+  const [emailBatchSize, setEmailBatchSize] = useState<number | undefined>(10)
 
   const [dateRange, setDateRange] = useState<[string, string]>(() => {
     const today = dayjs().format('YYYY-MM-DD')
@@ -201,6 +207,33 @@ export default function LatestPapers() {
       message.error(e?.message || '角色处理失败')
     } finally {
       setProcessingRole(false)
+    }
+  }
+
+  async function onEmailSupplement() {
+    setEmailSupplementing(true)
+    try {
+      const params: any = {
+        batch_size: emailBatchSize || 10
+      }
+      
+      if (emailStartId !== undefined) {
+        params.start_id = emailStartId
+      }
+      if (emailEndId !== undefined) {
+        params.end_id = emailEndId
+      }
+      
+      const res = await emailSupplement(params)
+      
+      message.success(`邮箱补充完成！已处理: ${res.total_processed}, 更新: ${res.total_updated}, 失败: ${res.total_failed}`)
+      
+      // Refresh data after email supplement
+      await load()
+    } catch (e: any) {
+      message.error(e?.message || '邮箱补充失败')
+    } finally {
+      setEmailSupplementing(false)
     }
   }
 
@@ -429,6 +462,40 @@ export default function LatestPapers() {
                    type="default"
                  >
                    Process Role
+                 </Button>
+               </Space>
+               <Space wrap>
+                 <Typography.Text type="secondary">Email Supplement ID Range:</Typography.Text>
+                 <InputNumber 
+                   placeholder="Start ID" 
+                   value={emailStartId} 
+                   onChange={(v) => setEmailStartId(v || undefined)}
+                   style={{ width: 100 }}
+                   min={1}
+                 />
+                 <Typography.Text type="secondary">-</Typography.Text>
+                 <InputNumber 
+                   placeholder="End ID" 
+                   value={emailEndId} 
+                   onChange={(v) => setEmailEndId(v || undefined)}
+                   style={{ width: 100 }}
+                   min={1}
+                 />
+                 <Typography.Text type="secondary">Batch:</Typography.Text>
+                 <InputNumber 
+                   placeholder="Batch Size" 
+                   value={emailBatchSize} 
+                   onChange={(v) => setEmailBatchSize(v || undefined)}
+                   style={{ width: 80 }}
+                   min={1}
+                   max={50}
+                 />
+                 <Button 
+                   loading={emailSupplementing} 
+                   onClick={onEmailSupplement}
+                   type="default"
+                 >
+                   Email Field Supplement
                  </Button>
                </Space>
              </Space>
