@@ -29,7 +29,7 @@ from src.agent.utils import (
     search_papers_by_ids, search_papers_by_range, search_papers_by_window, iso_to_date,
     # LLM utilities
     create_llm, download_first_page_text_with_retries,
-    # ORCID utilities
+    # ORCID utilities (keeping for compatibility)
     orcid_candidates_by_name, best_aff_match_for_institution, parse_orcid_date,
     normalize_aff_variants, norm_string,
     # QS utilities
@@ -37,7 +37,8 @@ from src.agent.utils import (
     # Database utilities
     create_schema_if_not_exists,
     # Tavily utilities
-    search_person_role_with_tavily
+    search_person_role_with_tavily, search_person_homepage_with_tavily,
+    crawl_homepage, extract_email_and_dates_with_llm
 )
 from src.agent.resume_manager import resume_manager, ProcessingStatus
 from src.agent.openalex_utils import get_author_academic_metrics
@@ -273,8 +274,8 @@ async def process_single_paper(state: Dict[str, Any]) -> Dict[str, Any]:
                         # 尝试获取作者的机构名称
                         institution_name = None
                         if aff:
-                            # 假设aff是列表，取第一个机构的名称
-                            institution_name = aff[0].get('name') if aff[0] else None
+                            # aff是字符串列表，取第一个机构名称
+                            institution_name = aff[0] if isinstance(aff[0], str) else None
 
                         academic_metrics = await asyncio.to_thread(
                             get_author_academic_metrics,
@@ -320,239 +321,163 @@ async def process_single_paper(state: Dict[str, Any]) -> Dict[str, Any]:
             )
         return {"papers": [{**paper, "author_affiliations": []}]}
 
-async def process_orcid_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Enrich a single paper using ORCID: per author, if ORCID record strictly matches name and
-    the institution matches the paper-extracted affiliation, capture orcid.
+async def process_tavily_homepage_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
+    """使用Tavily API获取作者的homepage链接"""
+    paper = state.get("paper", {})
+    paper_id = paper.get("id", "unknown")
+    session_id = state.get("session_id")
+    
+    aff_map = paper.get("author_affiliations", []) or []
+    if not aff_map:
+        return {"papers": [{**paper}]}
+    
+    # 为每个作者获取homepage
+    for item in aff_map:
+        name = (item.get("name") or "").strip()
+        affiliations = item.get("affiliations", [])
+        
+        if not name or not affiliations:
+            continue
+            
+        # 使用第一个机构进行搜索
+        affiliation = affiliations[0] if affiliations else ""
+        
+        try:
+            if _TAVILY_ENABLED:
+                homepage_result = await search_person_homepage_with_tavily(name, affiliation)
+                if homepage_result and homepage_result.get("search_successful"):
+                    # 使用LLM从Tavily响应中提取homepage链接
+                    tavily_answer = homepage_result.get('answer', '')
+                    tavily_results = homepage_result.get('results', [])
+                    
+                    if tavily_answer or tavily_results:
+                        # 导入LLM提取函数
+                        from src.agent.utils import _extract_homepage_link_with_llm
+                        
+                        extracted_link = _extract_homepage_link_with_llm(
+                            name, affiliation, tavily_answer, tavily_results
+                        )
+                        
+                        if extracted_link:
+                            item["homepage"] = extracted_link
+                            logger.info(f"[TAVILY] ✓ Extracted homepage for {name}: {extracted_link}")
+                        else:
+                            logger.info(f"[TAVILY] ✗ LLM could not extract valid homepage link for {name}")
+                    else:
+                        logger.info(f"[TAVILY] ✗ No answer or results from Tavily for {name}")
+                else:
+                    logger.info(f"[TAVILY] ✗ Tavily search failed for {name}")
+            else:
+                logger.info(f"[TAVILY] Disabled, skipping homepage search for {name}")
+        except Exception as e:
+            logger.warning(f"[TAVILY] Error getting homepage for {name}: {e}")
+    
+    return {"papers": [{**paper, "author_affiliations": aff_map}]}
 
-    Output merges via accumulator: {"papers": [enriched_paper]} where enriched_paper carries:
-      - orcid_by_author: {author_name -> orcid_id}
-    """
+async def process_homepage_extraction_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
+    """从homepage链接中提取email、role、start_date、end_date信息"""
+    paper = state.get("paper", {})
+    paper_id = paper.get("id", "unknown")
+    session_id = state.get("session_id")
+    
+    aff_map = paper.get("author_affiliations", []) or []
+    if not aff_map:
+        return {"papers": [{**paper}]}
+    
+    # 处理每个有homepage的作者
+    for item in aff_map:
+        name = (item.get("name") or "").strip()
+        homepage = item.get("homepage")
+        affiliations = item.get("affiliations", [])
+        
+        if not name or not homepage:
+            continue
+            
+        try:
+            # 爬取homepage内容并提取信息
+            homepage_content = await crawl_homepage(homepage)
+            if homepage_content:
+                # 使用LLM提取email和职位信息
+                extracted_info = await extract_email_and_dates_with_llm(
+                    name, homepage_content, affiliations[0] if affiliations else ""
+                )
+                
+                if extracted_info:
+                    if extracted_info.get("email"):
+                        item["email"] = extracted_info["email"]
+                    if extracted_info.get("role"):
+                        item["role"] = extracted_info["role"]
+                    if extracted_info.get("start_date"):
+                        item["start_date"] = extracted_info["start_date"]
+                    if extracted_info.get("end_date"):
+                        item["end_date"] = extracted_info["end_date"]
+                    
+                    logger.info(f"[HOMEPAGE] ✓ Extracted info for {name}: {extracted_info}")
+                else:
+                    logger.info(f"[HOMEPAGE] ✗ No info extracted from homepage for {name}")
+            else:
+                logger.warning(f"[HOMEPAGE] Failed to crawl homepage for {name}: {homepage}")
+                
+        except Exception as e:
+            logger.warning(f"[HOMEPAGE] Error processing homepage for {name}: {e}")
+            
+        # 如果从homepage没有获取到role信息，尝试使用Tavily API
+        if not item.get("role") and _TAVILY_ENABLED and affiliations:
+            try:
+                tavily_result = await search_person_role_with_tavily(name, affiliations[0])
+                if tavily_result and tavily_result.get("search_successful"):
+                    extracted_role = tavily_result.get("extracted_role")
+                    if extracted_role:
+                        item["role"] = extracted_role.strip()
+                        logger.info(f"[TAVILY] ✓ Found role for {name}: {extracted_role}")
+            except Exception as e:
+                logger.warning(f"[TAVILY] Error getting role for {name}: {e}")
+    
+    return {"papers": [{**paper, "author_affiliations": aff_map}]}
+
+async def process_openalex_for_paper(state: Dict[str, Any]) -> Dict[str, Any]:
+    """使用OpenAlex API获取作者的学术指标信息（citations, h_index, i10_index, orcid）"""
     paper = state.get("paper", {})
     paper_id = paper.get("id", "unknown")
     paper_title = paper.get("title", "Unknown")
     session_id = state.get("session_id")
     # Reduce verbose per-paper ORCID logs; keep processing minimal
     
-    authors = paper.get("authors", []) or []
     aff_map = paper.get("author_affiliations", []) or []
-    # Skip detailed ORCID author/affiliation count logs to keep console clean
     
-    if not authors or not aff_map:
-        logger.info("No authors or affiliations found, skipping ORCID processing")
+    if not aff_map:
+        logger.info("No author affiliations found, skipping OpenAlex processing")
         return {"papers": [{**paper}]}
-    orcid_by_author: Dict[str, str] = {}
-    api_exhausted = False
-
-    # Read-only pre-check: if author already has orcid and all current affiliations already
-    # have role/start/end (any of them) recorded, skip ORCID lookup for that author.
-    author_names = [(item.get("name") or "").strip() for item in aff_map if (item.get("name") or "").strip()]
-    name_to_author_row: Dict[str, Dict[str, Any]] = {}
-    name_to_aff_covered: Dict[str, Dict[str, bool]] = {}
-    author_id_to_db_affs: Dict[int, List[str]] = {}
-    try:
-        db_uri = os.getenv("DATABASE_URL")
-        if db_uri and author_names:
-            await DatabaseManager.initialize(db_uri)
-        pool = await DatabaseManager.get_pool()
-        async with pool.connection() as conn:
-            async with conn.cursor() as cur:
-                for nm in author_names:
-                        # author basic
-                        await cur.execute("SELECT id, orcid FROM authors WHERE author_name_en = %s LIMIT 1", (nm,))
-                        row = await cur.fetchone()
-                        if row:
-                            name_to_author_row[nm] = {"id": row[0], "orcid": row[1]}
-                            # known DB affiliations for this author
-                            await cur.execute(
-                                """
-                                SELECT f.aff_name
-                                FROM author_affiliation aa
-                                JOIN affiliations f ON f.id = aa.affiliation_id
-                                WHERE aa.author_id = %s
-                                """,
-                                (row[0],),
-                            )
-                            aff_rows = await cur.fetchall()
-                            author_id_to_db_affs[row[0]] = [r[0] for r in (aff_rows or []) if r and r[0]]
-                        # affiliation coverage map
-                        for item in [x for x in aff_map if (x.get("name") or "").strip() == nm]:
-                            for aff in (item.get("affiliations") or []):
-                                norm_key = (" ".join((aff or "").split()).replace(" ", "").lower())
-                                covered = False
-                                if row:
-                                    await cur.execute(
-                                        """
-                                        SELECT aa.role, aa.start_date, aa.end_date
-                                        FROM author_affiliation aa
-                                        JOIN affiliations f ON f.id = aa.affiliation_id
-                                        WHERE aa.author_id = %s AND REPLACE(LOWER(f.aff_name), ' ', '') = %s
-                                        LIMIT 1
-                                        """,
-                                        (row[0], norm_key),
-                                    )
-                                    meta = await cur.fetchone()
-                                    if meta and (meta[0] is not None or meta[1] is not None or meta[2] is not None):
-                                        covered = True
-                                name_to_aff_covered.setdefault(nm, {})[norm_key] = covered
-    except Exception:
-        # best-effort; if pre-check fails, proceed with ORCID lookups
-        pass
-
-    async def _lookup_author(name: str, affs: List[str]):
-        # Try affiliations in order; each lookup guarded by semaphore
-        # Skip if pre-check shows author has orcid and all current affs covered
-        pre = name_to_author_row.get(name)
-        if pre and (pre.get("orcid") or None):
-            all_cov = True
-            for aff in affs:
-                nk = (" ".join((aff or "").split()).replace(" ", "").lower())
-                if not name_to_aff_covered.get(name, {}).get(nk, False):
-                    all_cov = False
-                    break
-            if all_cov:
-                return None, None
-        # Build candidate affiliation pool: DB-known (by author_id) + current paper-extracted
-        author_id = (pre or {}).get("id")
-        db_affs = author_id_to_db_affs.get(author_id or -1, [])
-        pool_affs = []
-        seen = set()
-        for s in (db_affs + affs):
-            if not s:
-                continue
-            ss = " ".join(s.split())
-            if ss not in seen:
-                seen.add(ss); pool_affs.append(ss)
-        # Fetch strict-name candidates once, then try to match any candidate to any affiliation
-        async with _ORCID_SEM:
-            cands = await asyncio.to_thread(orcid_candidates_by_name, name, 5)
-        
-        # Try to find ORCID match with institution
-        for cand in cands or []:
-            for aff in pool_affs:
-                best = best_aff_match_for_institution(aff, cand)
-                if best:
-                    return aff, {**cand, "_best": best}
-        
-        # If no ORCID match found but we have candidates, return the first candidate
-        # This allows Tavily fallback to work even when ORCID has no institution data
-        if cands and pool_affs:
-            return pool_affs[0], {**cands[0], "_best": None}
-        
-        return None, None
-
-    tasks = []
+    
+    # 为每个作者获取OpenAlex学术指标
     for item in aff_map:
         name = (item.get("name") or "").strip()
+        affiliations = item.get("affiliations", [])
+        
         if not name:
             continue
-        affs = [a for a in (item.get("affiliations") or []) if a]
-        if not affs:
-            continue
-        tasks.append(_lookup_author(name, affs))
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    i = 0
-    for item in aff_map:
-        name = (item.get("name") or "").strip()
-        affs = [a for a in (item.get("affiliations") or []) if a]
-        if not name or not affs:
-            continue
-        r = results[i]; i += 1
+            
+        # 使用第一个机构进行验证
+        institution_name = affiliations[0] if affiliations else None
         
-        # Initialize role and department variables
-        role = None
-        department = None
-        sd = None
-        ed = None
-        aff_used = None
-        orcid_found = False
-        
-        # Process ORCID results if available
-        if not isinstance(r, Exception) and r:
-            aff_used, info = r
-            if info:
-                orcid_found = True
-                orcid_id = info.get("orcid_id")
-                if orcid_id:
-                    orcid_by_author[name] = orcid_id
-                best_aff = info.get("_best") or best_aff_match_for_institution(aff_used, info)
-                
-                if best_aff:
-                    # Keep role and department separate for proper database storage
-                    role = (best_aff.get("role") or "").strip() or None
-                    department = (best_aff.get("department") or "").strip() or None
-                        
-                    sd = parse_orcid_date(best_aff.get("start_date") or "")
-                    ed = parse_orcid_date(best_aff.get("end_date") or "")
-        
-        # If no role found (either ORCID not found or ORCID found but no role), try Tavily API
-        if not role and _TAVILY_ENABLED:
-            # Use aff_used if available from ORCID, otherwise use the first affiliation from the paper
-            search_aff = aff_used or (affs[0] if affs else None)
-            if search_aff:
-                # Keep Tavily logs minimal; avoid noisy info
-                try:
-                    # Add throttling delay between Tavily API calls in batch processing
-                    if i > 0:  # Skip delay for first author in batch
-                        await asyncio.sleep(_TAVILY_BATCH_DELAY)
-                    
-                    tavily_result = await search_person_role_with_tavily(name, search_aff)
-                    if tavily_result and tavily_result.get("search_successful"):
-                        extracted_role = tavily_result.get("extracted_role")
-                        if extracted_role:
-                            role = extracted_role.strip()
-                            # If we didn't have aff_used from ORCID, use the search affiliation
-                            if not aff_used:
-                                aff_used = search_aff
-                        else:
-                            logger.debug(f"[TAVILY] Search successful but no role extracted for {name}")
-                    else:
-                        logger.debug(f"[TAVILY] Search failed for {name}")
-                except Exception as e:
-                    error_msg = str(e).lower()
-                    # 检测Tavily API额度耗尽
-                    if "quota" in error_msg or "limit" in error_msg or "exceeded" in error_msg:
-                        logger.error(f"[TAVILY] ⚠ API quota exhausted while processing {name}: {e}")
-                        api_exhausted = True
-                        
-                        # 更新会话状态
-                        if session_id:
-                            resume_manager.update_paper_status(
-                                session_id, paper_id, ProcessingStatus.FAILED,
-                                error_message=f"Tavily API quota exhausted: {str(e)}"
-                            )
-                        
-                        # 返回当前状态，标记API已耗尽
-                        return {
-                            "papers": [paper],
-                            "api_exhausted": True,
-                            "processing_status": "api_quota_exhausted",
-                            "error_message": f"Tavily API quota exhausted while processing author {name}"
-                        }
-                    else:
-                        logger.error(f"[TAVILY] ✗ API error for {name}: {e}")
+        try:
+            academic_metrics = await asyncio.to_thread(
+                get_author_academic_metrics,
+                name,
+                institution_name
+            )
+            
+            if academic_metrics:
+                # 更新作者的学术指标信息
+                item["academic_metrics"] = academic_metrics
+                logger.info(f"[OPENALEX] ✓ Retrieved metrics for {name}: citations={academic_metrics.get('citations', 'N/A')}, h-index={academic_metrics.get('h_index', 'N/A')}")
             else:
-                logger.debug(f"[TAVILY] No affiliation available for search for {name}")
-        elif not role and not _TAVILY_ENABLED:
-            # Silence frequent skip logs when Tavily disabled
-            pass
-        
-        # 如果API已耗尽，停止处理
-        if api_exhausted:
-            break
-        
-        # Store role information in author_affiliations for database persistence
-        if role and name in [item.get("name") for item in aff_map]:
-            # Find the corresponding author in author_affiliations and add role
-            for item in aff_map:
-                if item.get("name") == name:
-                    item["role"] = role
-                    break
+                logger.info(f"[OPENALEX] ✗ No metrics found for {name}")
+                
+        except Exception as e:
+            logger.warning(f"[OPENALEX] Error getting metrics for {name}: {e}")
     
-    enriched = {**paper}
-    if orcid_by_author:
-        enriched["orcid_by_author"] = orcid_by_author
-    return {"papers": [enriched], "api_exhausted": api_exhausted}
+    return {"papers": [{**paper, "author_affiliations": aff_map}]}
 
 def merge_paper_results(state: DataProcessingState) -> DataProcessingState:
     """Merge and deduplicate results from parallel ORCID processing.
@@ -613,8 +538,7 @@ def merge_paper_results(state: DataProcessingState) -> DataProcessingState:
     
     return {
         "papers": merged_papers,
-        "api_exhausted": api_exhausted,
-        "processing_status": "api_quota_exhausted" if api_exhausted else "completed"
+        "api_exhausted": api_exhausted
     }
 
 def dispatch_affiliations(state: DataProcessingState):
@@ -628,8 +552,8 @@ def dispatch_affiliations(state: DataProcessingState):
         jobs.append(Send("process_single_paper", {"paper": p}))
     return jobs
 
-def dispatch_orcid_processing(state: DataProcessingState):
-    """Dispatch ORCID processing jobs for papers that have author_affiliations."""
+def dispatch_enrichment_processing(state: DataProcessingState):
+    """Dispatch parallel enrichment jobs (OpenAlex + Tavily) for papers that have author_affiliations."""
     papers = state.get("papers", []) or []
     if not papers:
         return [Send("upsert_papers", state)]
@@ -638,10 +562,12 @@ def dispatch_orcid_processing(state: DataProcessingState):
     for paper in papers:
         # Only process papers that have author_affiliations
         if paper.get("author_affiliations"):
-            jobs.append(Send("process_orcid_for_paper", {"paper": paper}))
+            # 并行处理OpenAlex和Tavily
+            jobs.append(Send("process_openalex_for_paper", {"paper": paper}))
+            jobs.append(Send("process_tavily_homepage_for_paper", {"paper": paper}))
     
     if not jobs:
-        # No papers need ORCID processing, go directly to upsert
+        # No papers need enrichment processing, go directly to upsert
         return [Send("upsert_papers", state)]
     
     return jobs
@@ -681,7 +607,6 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
             logger.info(f"Processing completed: {inserted} inserted, {skipped} skipped")
             
             return {
-                "processing_status": "completed",
                 "inserted": inserted,
                 "skipped": skipped,
                 "fetched": state.get("fetched", 0)
@@ -690,7 +615,6 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
         except Exception as e:
             logger.error(f"Error processing papers: {str(e)}")
             return {
-                "processing_status": "error",
                 "error_message": str(e),
                 "inserted": 0,
                 "skipped": 0
@@ -698,7 +622,6 @@ async def upsert_papers(state: DataProcessingState, config: RunnableConfig) -> D
         
     except Exception as e:
         return {
-            "processing_status": "error",
             "error_message": str(e)
         }
 
@@ -780,17 +703,21 @@ async def _process_paper_batch_with_context(
                         continue
 
                     # Authors and author_paper
-                    # Build email and academic metrics mapping from author_affiliations
+                    # Build email, academic metrics, and homepage mapping from author_affiliations
                     author_email_map = {}
                     author_metrics_map = {}
+                    author_homepage_map = {}
                     for item in p.get("author_affiliations", []) or []:
                         name = (item.get("name") or "").strip()
                         email = item.get("email")
                         academic_metrics = item.get("academic_metrics")
+                        homepage = item.get("homepage")
                         if name and email:
                             author_email_map[name] = email
                         if name and academic_metrics:
                             author_metrics_map[name] = academic_metrics
+                        if name and homepage:
+                            author_homepage_map[name] = homepage
                     
                     for idx, name_en in enumerate(p.get("authors", []), start=1):
                         # First check if we already processed this author in current transaction
@@ -809,6 +736,7 @@ async def _process_paper_batch_with_context(
                             
                         email = author_email_map.get(name_en)
                         orcid = (p.get("orcid_by_author") or {}).get(name_en)
+                        homepage = author_homepage_map.get(name_en)
                         
                         # If not in cache, try to find existing author by email or orcid
                         if email:
@@ -816,11 +744,11 @@ async def _process_paper_batch_with_context(
                             rowa = await cur.fetchone()
                             if rowa:
                                 author_id = rowa[0]
-                                # Update name and orcid if we have them
+                                # Update name, orcid, and homepage if we have them
                                 try:
                                     await cur.execute(
-                                        "UPDATE authors SET author_name_en = COALESCE(author_name_en, %s), orcid = COALESCE(orcid, %s) WHERE id = %s",
-                                        (name_en, orcid, author_id),
+                                        "UPDATE authors SET author_name_en = COALESCE(author_name_en, %s), orcid = COALESCE(orcid, %s), homepage = COALESCE(homepage, %s) WHERE id = %s",
+                                        (name_en, orcid, homepage, author_id),
                                     )
                                 except Exception:
                                     pass
@@ -830,11 +758,11 @@ async def _process_paper_batch_with_context(
                             rowa = await cur.fetchone()
                             if rowa:
                                 author_id = rowa[0]
-                                # Update name and email if we have them
+                                # Update name, email, and homepage if we have them
                                 try:
                                     await cur.execute(
-                                        "UPDATE authors SET author_name_en = COALESCE(author_name_en, %s), email = COALESCE(email, %s) WHERE id = %s",
-                                        (name_en, email, author_id),
+                                        "UPDATE authors SET author_name_en = COALESCE(author_name_en, %s), email = COALESCE(email, %s), homepage = COALESCE(homepage, %s) WHERE id = %s",
+                                        (name_en, email, homepage, author_id),
                                     )
                                 except Exception:
                                     pass
@@ -854,11 +782,11 @@ async def _process_paper_batch_with_context(
                         
                         # If no existing author found by email or orcid, create new one
                         if not author_id:
-                            # Create new author with available information (email and orcid can be NULL)
+                            # Create new author with available information (email, orcid, and homepage can be NULL)
                             try:
                                 await cur.execute(
-                                    "INSERT INTO authors (author_name_en, email, orcid, citations, h_index, i10_index) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id", 
-                                    (name_en, email, orcid, citations, h_index, i10_index)
+                                    "INSERT INTO authors (author_name_en, email, orcid, citations, h_index, i10_index, homepage) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id", 
+                                    (name_en, email, orcid, citations, h_index, i10_index, homepage)
                                 )
                                 rowa2 = await cur.fetchone()
                                 if rowa2:
@@ -868,7 +796,7 @@ async def _process_paper_batch_with_context(
                                 logger.warning(f"Failed to insert author {name_en}: {e}")
                                 continue
                         else:
-                            # Update existing author with academic metrics and ORCID if available
+                            # Update existing author with academic metrics, ORCID, and homepage if available
                             update_fields = []
                             update_values = []
                             if academic_metrics:
@@ -878,6 +806,10 @@ async def _process_paper_batch_with_context(
                                 # 仅当 OpenAlex 提供了 ORCID 且数据库中 ORCID 为空时才更新
                                 if openalex_orcid and not orcid:
                                     update_fields.append("orcid = COALESCE(%s, orcid)"); update_values.append(openalex_orcid)
+                            
+                            # Update homepage if available
+                            if homepage:
+                                update_fields.append("homepage = COALESCE(%s, homepage)"); update_values.append(homepage)
 
                             if update_fields:
                                 try:
@@ -1066,7 +998,9 @@ builder = StateGraph(DataProcessingState)
 builder.add_node("fetch_arxiv_today", fetch_arxiv_today)
 builder.add_node("process_single_paper", process_single_paper)
 builder.add_node("collect_single_paper_results", collect_single_paper_results)
-builder.add_node("process_orcid_for_paper", process_orcid_for_paper)
+builder.add_node("process_openalex_for_paper", process_openalex_for_paper)
+builder.add_node("process_tavily_homepage_for_paper", process_tavily_homepage_for_paper)
+builder.add_node("process_homepage_extraction_for_paper", process_homepage_extraction_for_paper)
 builder.add_node("merge_paper_results", merge_paper_results)
 builder.add_node("upsert_papers", upsert_papers)
 
@@ -1076,14 +1010,16 @@ builder.add_conditional_edges(
     "fetch_arxiv_today",
     dispatch_affiliations,
 )
-# Connect process_single_paper to collector, then dispatch ORCID processing
+# Connect process_single_paper to collector, then dispatch enrichment processing
 builder.add_edge("process_single_paper", "collect_single_paper_results")
 builder.add_conditional_edges(
     "collect_single_paper_results",
-    dispatch_orcid_processing,
+    dispatch_enrichment_processing,
 )
-# Connect ORCID processing to merge, then to upsert
-builder.add_edge("process_orcid_for_paper", "merge_paper_results")
+# Connect enrichment processing nodes: OpenAlex and Tavily run in parallel, then homepage extraction
+builder.add_edge("process_openalex_for_paper", "merge_paper_results")
+builder.add_edge("process_tavily_homepage_for_paper", "process_homepage_extraction_for_paper")
+builder.add_edge("process_homepage_extraction_for_paper", "merge_paper_results")
 builder.add_edge("merge_paper_results", "upsert_papers")
 
 # Connect upsert_papers to end

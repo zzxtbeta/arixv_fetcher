@@ -1,0 +1,26 @@
+{
+  "2409.03752v1": {
+    "paper_id": "2409.03752v1",
+    "status": "pending",
+    "attempts": 0,
+    "last_attempt_time": null,
+    "error_message": null,
+    "processing_time": null
+  },
+  "2409.03199v1": {
+    "paper_id": "2409.03199v1",
+    "status": "pending",
+    "attempts": 0,
+    "last_attempt_time": null,
+    "error_message": null,
+    "processing_time": null
+  },
+  "2409.02060v1": {
+    "paper_id": "2409.02060v1",
+    "status": "pending",
+    "attempts": 0,
+    "last_attempt_time": null,
+    "error_message": null,
+    "processing_time": null
+  }
+}

@@ -668,8 +668,8 @@ def get_author_academic_metrics(
     institution_name: Optional[str] = None
 ) -> Optional[Dict[str, Union[int, str]]]:
     """
-    根据作者姓名获取学术指标
-    返回包含 citations, h_index, i10_index 的字典，如果未找到则返回 None
+    根据作者姓名和机构获取学术指标
+    严格要求机构匹配，如果机构不匹配则返回 None
     """
     try:
         # 直接按姓名搜索作者
@@ -677,15 +677,21 @@ def get_author_academic_metrics(
         results = query.select([
             "id", "display_name", "orcid", "works_count", "cited_by_count", 
             "summary_stats", "affiliations", "topics", "last_known_institutions"
-        ]).get(per_page=10)
+        ]).get(per_page=20)  # 增加搜索结果数量以提高匹配机会
         
         if not results:
             logger.warning(f"No authors found for {author_name}")
             return None
         
-        # 如果有多个结果，选择姓名最匹配的
+        # 如果没有提供机构信息，无法进行精确匹配
+        if not institution_name:
+            logger.warning(f"No institution provided for {author_name}, cannot match accurately")
+            return None
+        
+        # 寻找机构匹配的作者
         best_match = None
-        best_score = 0
+        best_name_similarity = 0
+        institution_matched = False
         
         for author in results:
             # 计算姓名匹配度
@@ -693,33 +699,57 @@ def get_author_academic_metrics(
                                             author_name.lower(), 
                                             author.get('display_name', '').lower()).ratio()
             
-            institution_similarity = 0
-            if institution_name:
-                # 检查作者的 affiliations 或 last_known_institutions
-                openalex_institutions = []
-                for aff in author.get('affiliations', []):
-                    if aff.get('institution', {}).get('display_name'):
-                        openalex_institutions.append(aff['institution']['display_name'])
-                for inst in author.get('last_known_institutions', []):
-                    if inst.get('display_name'):
-                        openalex_institutions.append(inst['display_name'])
-                
-                # 计算机构匹配度
-                for oa_inst in openalex_institutions:
-                    inst_sim = SequenceMatcher(None, institution_name.lower(), oa_inst.lower()).ratio()
-                    if inst_sim > institution_similarity:
-                        institution_similarity = inst_sim
+            # 检查机构是否匹配
+            author_institutions = []
             
-            # 综合姓名和机构匹配度
-            # 可以根据实际需求调整权重，这里简单相加
-            combined_score = name_similarity + institution_similarity
-
-            if combined_score > best_score:
-                best_score = combined_score
-                best_match = author
+            # 从 affiliations 获取机构信息 - 使用正确的JSON结构
+            for aff in author.get('affiliations', []):
+                institution = aff.get('institution', {})
+                if institution and institution.get('display_name'):
+                    author_institutions.append(institution['display_name'])
+            
+            # 从 last_known_institutions 获取机构信息
+            for inst in author.get('last_known_institutions', []):
+                if inst.get('display_name'):
+                    author_institutions.append(inst['display_name'])
+            
+            # 调试信息：显示找到的机构
+            logger.info(f"Author '{author.get('display_name', '')}' institutions: {author_institutions}")
+            
+            # 检查是否有机构完全匹配
+            institution_match_found = False
+            matched_institution = None
+            
+            for oa_inst in author_institutions:
+                logger.info(f"Comparing institutions: '{institution_name}' <-> '{oa_inst}'")
+                
+                # 要求机构名称完全相同（忽略大小写）
+                if institution_name.lower() == oa_inst.lower():
+                    matched_institution = oa_inst
+                    institution_match_found = True
+                    logger.info(f"✓ Exact institution match found: '{institution_name}' <-> '{oa_inst}'")
+                    break
+            
+            if not institution_match_found:
+                logger.info(f"✗ No exact institution match for '{institution_name}'")
+            
+            # 只有机构匹配的情况下才考虑该候选者
+            if institution_match_found:
+                institution_matched = True
+                # 在机构匹配的候选者中选择姓名最相似的
+                if name_similarity > best_name_similarity:
+                    best_name_similarity = name_similarity
+                    best_match = author
+                    logger.info(f"Better name match found: '{author_name}' <-> '{author.get('display_name', '')}' (similarity: {name_similarity:.2f})")
         
-        if not best_match or best_score < 0.6:  # 最低匹配阈值
-            logger.warning(f"No good match found for {author_name}")
+        # 如果没有找到机构匹配的作者，返回 None
+        if not institution_matched or not best_match:
+            logger.warning(f"No author found with matching institution for {author_name} at {institution_name}")
+            return None
+        
+        # 姓名相似度也需要达到严格要求
+        if best_name_similarity < 0.8:
+            logger.warning(f"Name similarity too low for {author_name}: {best_name_similarity:.2f} (required: 0.8+)")
             return None
         
         # 提取学术指标
@@ -729,10 +759,10 @@ def get_author_academic_metrics(
             'citations': best_match.get('cited_by_count', 0),
             'h_index': summary_stats.get('h_index', 0),
             'i10_index': summary_stats.get('i10_index', 0),
-            'orcid': best_match.get('orcid') # 添加 ORCID
+            'orcid': best_match.get('orcid')
         }
         
-        logger.info(f"Found academic metrics and ORCID for {author_name}: {metrics}")
+        logger.info(f"Successfully matched {author_name} at {institution_name}: {metrics}")
         return metrics
         
     except Exception as e:

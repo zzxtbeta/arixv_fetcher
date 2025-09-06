@@ -3,6 +3,7 @@
 from typing import Optional, cast, Any
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 import logging
+import psycopg
 from src.db.database import DatabaseManager
 
 logger = logging.getLogger(__name__)
@@ -44,10 +45,13 @@ class CheckpointerManager:
                 # Run setup only once per process lifetime, but ignore benign duplicate migration errors
                 try:
                     await cls._checkpointer.setup()
+                except (psycopg.errors.DuplicateColumn, psycopg.errors.DuplicateTable) as e:
+                    # Ignore duplicate column/table errors from LangGraph migrations
+                    logger.warning(f"Ignoring duplicate schema error during LangGraph setup: {e}")
                 except Exception as e:
                     msg = str(e).lower()
                     if "already exists" in msg or "duplicate" in msg:
-                        logger.warning(e)
+                        logger.warning(f"Ignoring duplicate schema error: {e}")
                     else:
                         raise
             cls._initialized = True
