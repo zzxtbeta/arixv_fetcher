@@ -1524,7 +1524,7 @@ async def search_person_affiliation_details_with_tavily(name: str, affiliation: 
         if not client:
             return {"search_successful": False, "error": "Tavily client not available"}
             
-        response = await client.search(
+        response = client.search(
             query=query,
             search_depth="advanced",
             max_results=5,
@@ -1533,10 +1533,19 @@ async def search_person_affiliation_details_with_tavily(name: str, affiliation: 
         )
         
         if response and response.get('results'):
+            # 使用LLM提取结构化的详细信息
+            tavily_answer = response.get('answer', '')
+            tavily_results = response.get('results', [])
+            
+            extracted_details = _extract_affiliation_details_with_llm(
+                name, affiliation, tavily_answer, tavily_results
+            )
+            
             return {
                 "search_successful": True,
-                "answer": response.get('answer', ''),
-                "results": response.get('results', [])
+                "answer": tavily_answer,
+                "results": tavily_results,
+                "extracted_details": extracted_details
             }
         else:
             return {"search_successful": False, "error": "No results found"}

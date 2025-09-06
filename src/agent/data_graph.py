@@ -362,21 +362,27 @@ async def process_tavily_homepage_for_paper(state: Dict[str, Any]) -> Dict[str, 
                             item["homepage"] = extracted_link
                             logger.info(f"[TAVILY] ✓ Extracted homepage for {name}: {extracted_link}")
                             
-                            # 立即提取role信息
+                            # 立即提取role、start_date、end_date信息
                             try:
-                                from src.agent.utils import search_person_role_with_tavily
-                                role_result = await search_person_role_with_tavily(name, affiliation)
-                                if role_result and role_result.get("search_successful"):
-                                    extracted_role = role_result.get("extracted_role")
-                                    if extracted_role:
-                                        item["role"] = extracted_role.strip()
-                                        logger.info(f"[TAVILY] ✓ Extracted role for {name}: {extracted_role}")
-                                    else:
-                                        logger.info(f"[TAVILY] ✗ No role extracted for {name}")
+                                from src.agent.utils import search_person_affiliation_details_with_tavily
+                                details_result = await search_person_affiliation_details_with_tavily(name, affiliation, extracted_link)
+                                if details_result and details_result.get("search_successful"):
+                                    extracted_details = details_result.get("extracted_details", {})
+                                    if extracted_details.get("role"):
+                                        item["role"] = extracted_details["role"].strip()
+                                        logger.info(f"[TAVILY] ✓ Extracted role for {name}: {extracted_details['role']}")
+                                    if extracted_details.get("start_date"):
+                                        item["start_date"] = extracted_details["start_date"]
+                                        logger.info(f"[TAVILY] ✓ Extracted start_date for {name}: {extracted_details['start_date']}")
+                                    if extracted_details.get("end_date"):
+                                        item["end_date"] = extracted_details["end_date"]
+                                        logger.info(f"[TAVILY] ✓ Extracted end_date for {name}: {extracted_details['end_date']}")
+                                    if not any(extracted_details.values()):
+                                        logger.info(f"[TAVILY] ✗ No details extracted for {name}")
                                 else:
-                                    logger.info(f"[TAVILY] ✗ Role search failed for {name}")
-                            except Exception as role_e:
-                                logger.warning(f"[TAVILY] Error getting role for {name}: {role_e}")
+                                    logger.info(f"[TAVILY] ✗ Details search failed for {name}")
+                            except Exception as details_e:
+                                logger.warning(f"[TAVILY] Error getting details for {name}: {details_e}")
                         else:
                             logger.info(f"[TAVILY] ✗ LLM could not extract valid homepage link for {name}")
                     else:
@@ -1018,29 +1024,22 @@ async def _process_paper_batch_with_context(
                             # Enrich with QS rankings and country if available
                             await enrich_affiliation_from_qs(cur, aff_id, cleaned, qs_map, qs_names, qs_sys_ids)
                             
-                            # Upsert author_affiliation: include role information from Tavily/ORCID search
+                            # Upsert author_affiliation: include role, start_date, end_date from Tavily/ORCID search
                             pub_dt = published_date
-                            if author_role:
-                                await cur.execute(
-                                    """
-                                    INSERT INTO author_affiliation (author_id, affiliation_id, latest_time, role)
-                                    VALUES (%s, %s, %s, %s)
-                                    ON CONFLICT (author_id, affiliation_id) DO UPDATE SET
-                                      latest_time = GREATEST(COALESCE(author_affiliation.latest_time, EXCLUDED.latest_time), EXCLUDED.latest_time),
-                                      role = COALESCE(EXCLUDED.role, author_affiliation.role)
-                                    """,
-                                    (author_id, aff_id, pub_dt, author_role),
-                                )
-                            else:
-                                await cur.execute(
-                                    """
-                                    INSERT INTO author_affiliation (author_id, affiliation_id, latest_time)
-                                    VALUES (%s, %s, %s)
-                                    ON CONFLICT (author_id, affiliation_id) DO UPDATE SET
-                                      latest_time = GREATEST(COALESCE(author_affiliation.latest_time, EXCLUDED.latest_time), EXCLUDED.latest_time)
-                                    """,
-                                    (author_id, aff_id, pub_dt),
-                                )
+                            
+                            # Always insert with all available fields
+                            await cur.execute(
+                                """
+                                INSERT INTO author_affiliation (author_id, affiliation_id, latest_time, role, start_date, end_date)
+                                VALUES (%s, %s, %s, %s, %s, %s)
+                                ON CONFLICT (author_id, affiliation_id) DO UPDATE SET
+                                  latest_time = GREATEST(COALESCE(author_affiliation.latest_time, EXCLUDED.latest_time), EXCLUDED.latest_time),
+                                  role = COALESCE(EXCLUDED.role, author_affiliation.role),
+                                  start_date = COALESCE(EXCLUDED.start_date, author_affiliation.start_date),
+                                  end_date = COALESCE(EXCLUDED.end_date, author_affiliation.end_date)
+                                """,
+                                (author_id, aff_id, pub_dt, author_role, author_start_date, author_end_date),
+                            )
 
             # Commit the transaction for this batch
             await conn.commit()
