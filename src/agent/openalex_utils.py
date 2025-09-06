@@ -664,8 +664,9 @@ openalex_client = OpenAlexIntegration()
 
 # 便捷函数
 def get_author_academic_metrics(
-    author_name: str
-) -> Optional[Dict[str, int]]:
+    author_name: str,
+    institution_name: Optional[str] = None
+) -> Optional[Dict[str, Union[int, str]]]:
     """
     根据作者姓名获取学术指标
     返回包含 citations, h_index, i10_index 的字典，如果未找到则返回 None
@@ -692,8 +693,29 @@ def get_author_academic_metrics(
                                             author_name.lower(), 
                                             author.get('display_name', '').lower()).ratio()
             
-            if name_similarity > best_score:
-                best_score = name_similarity
+            institution_similarity = 0
+            if institution_name:
+                # 检查作者的 affiliations 或 last_known_institutions
+                openalex_institutions = []
+                for aff in author.get('affiliations', []):
+                    if aff.get('institution', {}).get('display_name'):
+                        openalex_institutions.append(aff['institution']['display_name'])
+                for inst in author.get('last_known_institutions', []):
+                    if inst.get('display_name'):
+                        openalex_institutions.append(inst['display_name'])
+                
+                # 计算机构匹配度
+                for oa_inst in openalex_institutions:
+                    inst_sim = SequenceMatcher(None, institution_name.lower(), oa_inst.lower()).ratio()
+                    if inst_sim > institution_similarity:
+                        institution_similarity = inst_sim
+            
+            # 综合姓名和机构匹配度
+            # 可以根据实际需求调整权重，这里简单相加
+            combined_score = name_similarity + institution_similarity
+
+            if combined_score > best_score:
+                best_score = combined_score
                 best_match = author
         
         if not best_match or best_score < 0.6:  # 最低匹配阈值
@@ -706,10 +728,11 @@ def get_author_academic_metrics(
         metrics = {
             'citations': best_match.get('cited_by_count', 0),
             'h_index': summary_stats.get('h_index', 0),
-            'i10_index': summary_stats.get('i10_index', 0)
+            'i10_index': summary_stats.get('i10_index', 0),
+            'orcid': best_match.get('orcid') # 添加 ORCID
         }
         
-        logger.info(f"Found academic metrics for {author_name}: {metrics}")
+        logger.info(f"Found academic metrics and ORCID for {author_name}: {metrics}")
         return metrics
         
     except Exception as e:

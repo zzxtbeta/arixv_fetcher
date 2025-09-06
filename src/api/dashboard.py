@@ -10,7 +10,7 @@ import asyncio
 import os
 from functools import lru_cache
 
-from src.db.supabase_client import supabase_client
+from src.db.postgres_client import postgres_client
 from src.agent.utils import orcid_search_and_pick, best_aff_match_for_institution, parse_orcid_date
 from src.agent.utils import orcid_candidates_by_name
 from src.agent.utils import search_person_general_with_tavily, search_person_role_with_tavily
@@ -69,10 +69,10 @@ async def overview_stats() -> Dict[str, Any]:
     
     try:
         # Fetch fresh data
-        papers = supabase_client.count("papers")
-        authors = supabase_client.count("authors")
-        affiliations = supabase_client.count("affiliations")
-        categories = supabase_client.count("categories")
+        papers = await postgres_client.count("papers")
+        authors = await postgres_client.count("authors")
+        affiliations = await postgres_client.count("affiliations")
+        categories = await postgres_client.count("categories")
         
         data = {
             "papers": papers,
@@ -133,7 +133,7 @@ async def author_search(q: str = Query(..., description="Fuzzy author name")) ->
 
 
 @router.get("/author/advanced")
-async def advanced_author_search(
+async def advanced_author_search_endpoint(
     author_name: Optional[str] = Query(None, description="Author name (fuzzy search)"),
     email: Optional[str] = Query(None, description="Email address (fuzzy search)"),
     orcid: Optional[str] = Query(None, description="ORCID ID (exact match)"),
@@ -147,6 +147,39 @@ async def advanced_author_search(
     i10_index_min: Optional[int] = Query(None, description="Minimum I10-index"),
     i10_index_max: Optional[int] = Query(None, description="Maximum I10-index"),
     limit: int = Query(50, description="Maximum number of results")
+) -> Dict[str, Any]:
+    """Advanced author search API endpoint with multiple criteria support."""
+    return await advanced_author_search(
+        author_name=author_name,
+        email=email,
+        orcid=orcid,
+        paper_title=paper_title,
+        affiliation_name=affiliation_name,
+        role=role,
+        citations_min=citations_min,
+        citations_max=citations_max,
+        h_index_min=h_index_min,
+        h_index_max=h_index_max,
+        i10_index_min=i10_index_min,
+        i10_index_max=i10_index_max,
+        limit=limit
+    )
+
+
+async def advanced_author_search(
+    author_name: Optional[str] = None,
+    email: Optional[str] = None,
+    orcid: Optional[str] = None,
+    paper_title: Optional[str] = None,
+    affiliation_name: Optional[str] = None,
+    role: Optional[str] = None,
+    citations_min: Optional[int] = None,
+    citations_max: Optional[int] = None,
+    h_index_min: Optional[int] = None,
+    h_index_max: Optional[int] = None,
+    i10_index_min: Optional[int] = None,
+    i10_index_max: Optional[int] = None,
+    limit: int = 50
 ) -> Dict[str, Any]:
     """Advanced author search with multiple criteria support.
     
@@ -171,7 +204,7 @@ async def advanced_author_search(
             search_performed = True
             norm_q = _normalize_name(author_name)
             # Primary: ilike by original input
-            name_candidates = supabase_client.select_ilike(
+            name_candidates = await postgres_client.select_ilike(
                 table="authors",
                 column="author_name_en",
                 pattern=f"%{author_name}%",
@@ -179,7 +212,7 @@ async def advanced_author_search(
                 limit=500,
             ) or []
             # Secondary: space-insensitive matching
-            extra_pool = supabase_client.select(
+            extra_pool = await postgres_client.select(
                 table="authors",
                 columns="id, author_name_en",
                 limit=2000,
@@ -195,7 +228,7 @@ async def advanced_author_search(
         # Search by email
         if email:
             search_performed = True
-            email_candidates = supabase_client.select_ilike(
+            email_candidates = await postgres_client.select_ilike(
                 table="authors",
                 column="email",
                 pattern=f"%{email}%",
@@ -211,7 +244,7 @@ async def advanced_author_search(
         # Search by ORCID
         if orcid:
             search_performed = True
-            orcid_candidates = supabase_client.select(
+            orcid_candidates = await postgres_client.select(
                 table="authors",
                 filters={"orcid": orcid},
                 columns="id",
@@ -225,7 +258,7 @@ async def advanced_author_search(
         # Search by paper title
         if paper_title:
             search_performed = True
-            paper_candidates = supabase_client.select_ilike(
+            paper_candidates = await postgres_client.select_ilike(
                 table="papers",
                 column="paper_title",
                 pattern=f"%{paper_title}%",
@@ -234,7 +267,7 @@ async def advanced_author_search(
             ) or []
             paper_ids = [p.get("id") for p in paper_candidates if p.get("id")]
             if paper_ids:
-                author_paper_links = supabase_client.select_in(
+                author_paper_links = await postgres_client.select_in(
                     table="author_paper",
                     column="paper_id",
                     values=paper_ids,
@@ -252,7 +285,7 @@ async def advanced_author_search(
         # Search by affiliation name
         if affiliation_name:
             search_performed = True
-            aff_candidates = supabase_client.select_ilike(
+            aff_candidates = await postgres_client.select_ilike(
                 table="affiliations",
                 column="aff_name",
                 pattern=f"%{affiliation_name}%",
@@ -261,7 +294,7 @@ async def advanced_author_search(
             ) or []
             aff_ids = [a.get("id") for a in aff_candidates if a.get("id")]
             if aff_ids:
-                author_aff_links = supabase_client.select_in(
+                author_aff_links = await postgres_client.select_in(
                     table="author_affiliation",
                     column="affiliation_id",
                     values=aff_ids,
@@ -279,7 +312,7 @@ async def advanced_author_search(
         # Search by role
         if role:
             search_performed = True
-            role_links = supabase_client.select_ilike(
+            role_links = await postgres_client.select_ilike(
                 table="author_affiliation",
                 column="role",
                 pattern=f"%{role}%",
@@ -304,7 +337,7 @@ async def advanced_author_search(
             return {"results": [], "total": 0}
 
         # Fetch author details with metrics
-        authors_data = supabase_client.select_in(
+        authors_data = await postgres_client.select_in(
             table="authors",
             column="id",
             values=author_ids,
@@ -346,12 +379,12 @@ async def advanced_author_search(
             if not author_id:
                 continue
             # Author's papers via author_paper
-            aps = supabase_client.select("author_paper", filters={"author_id": author_id}, columns="paper_id, author_order")
+            aps = await postgres_client.select("author_paper", filters={"author_id": author_id}, columns="paper_id, author_order")
             paper_ids = [r["paper_id"] for r in aps if r.get("paper_id")]
             # Recent papers (limited)
             recent = []
             if paper_ids:
-                recent = supabase_client.select_in(
+                recent = await postgres_client.select_in(
                     table="papers",
                     column="id",
                     values=paper_ids,
@@ -361,10 +394,10 @@ async def advanced_author_search(
                 )
             # Affiliations
             affs = []
-            aff_links = supabase_client.select("author_affiliation", filters={"author_id": author_id}, columns="affiliation_id, role, start_date, end_date, latest_time")
+            aff_links = await postgres_client.select("author_affiliation", filters={"author_id": author_id}, columns="affiliation_id, role, start_date, end_date, latest_time")
             aff_ids = [r.get("affiliation_id") for r in aff_links if r.get("affiliation_id")]
             if aff_ids:
-                affs = supabase_client.select_in("affiliations", "id", aff_ids, columns="id, aff_name, country")
+                affs = await postgres_client.select_in("affiliations", "id", aff_ids, columns="id, aff_name, country")
                 # attach role/start/end/latest_time from link rows
                 meta = {r.get("affiliation_id"): {"role": r.get("role"), "start_date": r.get("start_date"), "end_date": r.get("end_date"), "latest_time": r.get("latest_time")} for r in (aff_links or [])}
                 for arow in affs or []:
@@ -372,9 +405,9 @@ async def advanced_author_search(
                     if fid in meta:
                         arow.update(meta[fid])
                 # QS ranks enrichment for this author's affiliations
-                rs = supabase_client.select_in("ranking_systems", "system_name", ["QS 2025", "QS 2024"], columns="id, system_name")
+                rs = await postgres_client.select_in("ranking_systems", "system_name", ["QS 2025", "QS 2024"], columns="id, system_name")
                 sys_by_name = {r.get("system_name"): r.get("id") for r in rs}
-                ar = supabase_client.select_in(
+                ar = await postgres_client.select_in(
                     "affiliation_rankings",
                     "aff_id",
                     aff_ids,
@@ -397,7 +430,7 @@ async def advanced_author_search(
             # Collaborators
             coll_counts: Dict[int, int] = {}
             if paper_ids:
-                co_links = supabase_client.select_in("author_paper", "paper_id", paper_ids, columns="author_id, paper_id")
+                co_links = await postgres_client.select_in("author_paper", "paper_id", paper_ids, columns="author_id, paper_id")
                 for row in co_links:
                     co_id = row.get("author_id")
                     if not co_id or co_id == author_id:
@@ -407,7 +440,7 @@ async def advanced_author_search(
             if coll_counts:
                 # Fetch top N collaborator names
                 top_ids = sorted(coll_counts, key=coll_counts.get, reverse=True)[:10]
-                coll_rows = supabase_client.select_in("authors", "id", top_ids, columns="id, author_name_en")
+                coll_rows = await postgres_client.select_in("authors", "id", top_ids, columns="id, author_name_en")
                 id_to_name = {r["id"]: r.get("author_name_en") for r in coll_rows}
                 top_collaborators = [
                     {"id": aid, "name": id_to_name.get(aid), "count": coll_counts[aid]}
@@ -473,7 +506,7 @@ async def latest_papers(
         if title_search and title_search.strip():
             # Use ilike for case-insensitive fuzzy matching on paper title
             search_active = True
-            papers = supabase_client.select_ilike(
+            papers = await postgres_client.select_ilike(
                 table="papers",
                 column="paper_title",
                 pattern=f"%{title_search.strip()}%",
@@ -483,7 +516,7 @@ async def latest_papers(
         elif arxiv_search and arxiv_search.strip():
             # Use ilike for fuzzy matching on arXiv entry ID
             search_active = True
-            papers = supabase_client.select_ilike(
+            papers = await postgres_client.select_ilike(
                 table="papers",
                 column="arxiv_entry", 
                 pattern=f"%{arxiv_search.strip()}%",
@@ -492,8 +525,8 @@ async def latest_papers(
             ) or []
         else:
             # Default behavior: get all papers ordered by published date
-            total = supabase_client.count("papers")
-            papers = supabase_client.select(
+            total = await postgres_client.count("papers")
+            papers = await postgres_client.select(
                 table="papers",
                 columns="id, paper_title, published, pdf_source, arxiv_entry",
                 order_by=("published", False),
@@ -513,9 +546,9 @@ async def latest_papers(
             return {"items": [], "total": total, "page": page, "limit": limit}
         ids = [p["id"] for p in papers]
         # authors
-        ap = supabase_client.select_in("author_paper", "paper_id", ids, columns="paper_id, author_id, author_order")
+        ap = await postgres_client.select_in("author_paper", "paper_id", ids, columns="paper_id, author_id, author_order")
         author_ids = sorted({r["author_id"] for r in ap if r.get("author_id")})
-        authors = supabase_client.select_in("authors", "id", author_ids, columns="id, author_name_en") if author_ids else []
+        authors = await postgres_client.select_in("authors", "id", author_ids, columns="id, author_name_en") if author_ids else []
         id_to_author = {a["id"]: a.get("author_name_en") for a in authors}
         paper_to_authors: Dict[int, List[Dict[str, Any]]] = {}
         for row in ap:
@@ -526,9 +559,9 @@ async def latest_papers(
         for k in paper_to_authors:
             paper_to_authors[k].sort(key=lambda x: (x.get("order") or 0))
         # categories
-        pc = supabase_client.select_in("paper_category", "paper_id", ids, columns="paper_id, category_id")
+        pc = await postgres_client.select_in("paper_category", "paper_id", ids, columns="paper_id, category_id")
         cat_ids = sorted({r["category_id"] for r in pc if r.get("category_id")})
-        cats = supabase_client.select_in("categories", "id", cat_ids, columns="id, category") if cat_ids else []
+        cats = await postgres_client.select_in("categories", "id", cat_ids, columns="id, category") if cat_ids else []
         id_to_cat = {c["id"]: c.get("category") for c in cats}
         paper_to_cats: Dict[int, List[str]] = {}
         for row in pc:
@@ -561,7 +594,7 @@ async def chart_affiliation_paper_count(days: int = 7) -> Dict[str, Any]:
         # 1) papers in window (fetch recent and filter locally to avoid SDK date op)
         now = datetime.now(timezone.utc).date()
         start_date = now - timedelta(days=days)
-        papers_all = supabase_client.select(
+        papers_all = await postgres_client.select(
             table="papers",
             columns="id, published",
             order_by=("published", False),
@@ -574,7 +607,7 @@ async def chart_affiliation_paper_count(days: int = 7) -> Dict[str, Any]:
             return {"items": [], "days": days}
         paper_ids = [p["id"] for p in papers]
         # 2) author_paper within those papers
-        ap = supabase_client.select_in("author_paper", "paper_id", paper_ids, columns="paper_id, author_id")
+        ap = await postgres_client.select_in("author_paper", "paper_id", paper_ids, columns="paper_id, author_id")
         if not ap:
             return {"items": [], "days": days}
         paper_to_authors: Dict[int, Set[int]] = {}
@@ -587,11 +620,11 @@ async def chart_affiliation_paper_count(days: int = 7) -> Dict[str, Any]:
         if not author_ids:
             return {"items": [], "days": days}
         # 3) author_affiliation for those authors
-        aa = supabase_client.select_in("author_affiliation", "author_id", author_ids, columns="author_id, affiliation_id")
+        aa = await postgres_client.select_in("author_affiliation", "author_id", author_ids, columns="author_id, affiliation_id")
         aff_ids = sorted({r.get("affiliation_id") for r in aa if r.get("affiliation_id")}) if aa else []
         if not aff_ids:
             return {"items": [], "days": days}
-        aff_rows = supabase_client.select_in("affiliations", "id", aff_ids, columns="id, aff_name")
+        aff_rows = await postgres_client.select_in("affiliations", "id", aff_ids, columns="id, aff_name")
         id_to_aff = {r["id"]: r.get("aff_name") for r in aff_rows}
         # 4) build map: affiliation -> set(paper_id)
         aff_to_papers: Dict[int, Set[int]] = {}
@@ -627,7 +660,7 @@ async def chart_affiliation_author_count(days: int = 7) -> Dict[str, Any]:
         now = datetime.now(timezone.utc).date()
         start_date = now - timedelta(days=days)
         # papers (fetch recent and filter locally)
-        papers_all = supabase_client.select(
+        papers_all = await postgres_client.select(
             table="papers",
             columns="id, published",
             order_by=("published", False),
@@ -640,12 +673,12 @@ async def chart_affiliation_author_count(days: int = 7) -> Dict[str, Any]:
             return {"items": [], "days": days}
         paper_ids = [p["id"] for p in papers]
         # authors for those papers
-        ap = supabase_client.select_in("author_paper", "paper_id", paper_ids, columns="paper_id, author_id")
+        ap = await postgres_client.select_in("author_paper", "paper_id", paper_ids, columns="paper_id, author_id")
         author_ids = sorted({r.get("author_id") for r in ap if r.get("author_id")}) if ap else []
         if not author_ids:
             return {"items": [], "days": days}
         # author -> affiliation
-        aa = supabase_client.select_in("author_affiliation", "author_id", author_ids, columns="author_id, affiliation_id")
+        aa = await postgres_client.select_in("author_affiliation", "author_id", author_ids, columns="author_id, affiliation_id")
         aff_to_authors: Dict[int, Set[int]] = {}
         for r in aa or []:
             a = r.get("author_id"); f = r.get("affiliation_id")
@@ -655,7 +688,7 @@ async def chart_affiliation_author_count(days: int = 7) -> Dict[str, Any]:
         if not aff_to_authors:
             return {"items": [], "days": days}
         aff_ids = sorted(aff_to_authors.keys())
-        aff_rows = supabase_client.select_in("affiliations", "id", aff_ids, columns="id, aff_name")
+        aff_rows = await postgres_client.select_in("affiliations", "id", aff_ids, columns="id, aff_name")
         id_to_aff = {r["id"]: r.get("aff_name") for r in aff_rows}
         items = [
             {"affiliation": id_to_aff.get(fid, str(fid)), "count": len(aids)}
@@ -752,9 +785,9 @@ async def export_authors(format: str = Query("json", description="Export format:
         import io
         
         # Get all authors
-        authors = supabase_client.select(
+        authors = await postgres_client.select(
             table="authors",
-            columns="id, author_name_en, author_name_cn, email, orcid, citations, h_index, i10_index",
+            columns="id, author_name_en, author_name_cn, email, orcid, citations, h_index, i10_index, homepage",
             order_by=("id", True)
         ) or []
         
@@ -764,7 +797,7 @@ async def export_authors(format: str = Query("json", description="Export format:
             author_id = author.get("id")
             
             # Get author's affiliations and roles
-            aff_links = supabase_client.select(
+            aff_links = await postgres_client.select(
                 "author_affiliation", 
                 filters={"author_id": author_id}, 
                 columns="affiliation_id, role"
@@ -775,7 +808,7 @@ async def export_authors(format: str = Query("json", description="Export format:
             if aff_links:
                 aff_ids = [link.get("affiliation_id") for link in aff_links if link.get("affiliation_id")]
                 if aff_ids:
-                    affs = supabase_client.select_in(
+                    affs = await postgres_client.select_in(
                         "affiliations", 
                         "id", 
                         aff_ids, 
@@ -798,7 +831,7 @@ async def export_authors(format: str = Query("json", description="Export format:
             
             # Get author's recent papers
             recent_papers = []
-            paper_links = supabase_client.select(
+            paper_links = await postgres_client.select(
                 "author_paper",
                 filters={"author_id": author_id},
                 columns="paper_id",
@@ -808,7 +841,7 @@ async def export_authors(format: str = Query("json", description="Export format:
             if paper_links:
                 paper_ids = [link.get("paper_id") for link in paper_links if link.get("paper_id")]
                 if paper_ids:
-                    papers = supabase_client.select_in(
+                    papers = await postgres_client.select_in(
                         "papers",
                         "id",
                         paper_ids,
@@ -823,7 +856,7 @@ async def export_authors(format: str = Query("json", description="Export format:
                         
                         # Get paper categories
                         categories = []
-                        cat_links = supabase_client.select(
+                        cat_links = await postgres_client.select(
                             "paper_category",
                             filters={"paper_id": paper_id},
                             columns="category_id"
@@ -832,7 +865,7 @@ async def export_authors(format: str = Query("json", description="Export format:
                         if cat_links:
                             cat_ids = [link.get("category_id") for link in cat_links if link.get("category_id")]
                             if cat_ids:
-                                cats = supabase_client.select_in(
+                                cats = await postgres_client.select_in(
                                     "categories",
                                     "id",
                                     cat_ids,
@@ -842,7 +875,7 @@ async def export_authors(format: str = Query("json", description="Export format:
                         
                         # Get paper keywords
                         keywords = []
-                        kw_links = supabase_client.select(
+                        kw_links = await postgres_client.select(
                             "paper_keyword",
                             filters={"paper_id": paper_id},
                             columns="keyword_id"
@@ -851,7 +884,7 @@ async def export_authors(format: str = Query("json", description="Export format:
                         if kw_links:
                             kw_ids = [link.get("keyword_id") for link in kw_links if link.get("keyword_id")]
                             if kw_ids:
-                                kws = supabase_client.select_in(
+                                kws = await postgres_client.select_in(
                                     "keywords",
                                     "id",
                                     kw_ids,
@@ -874,6 +907,7 @@ async def export_authors(format: str = Query("json", description="Export format:
                 "author_name_cn": author.get("author_name_cn") or "Unknown",
                 "email": author.get("email") or "Unknown",
                 "orcid": author.get("orcid") or "Unknown",
+                "homepage": author.get("homepage") or "Unknown",
                 "citations": author.get("citations") or 0,
                 "h_index": author.get("h_index") or 0,
                 "i10_index": author.get("i10_index") or 0,
@@ -891,7 +925,7 @@ async def export_authors(format: str = Query("json", description="Export format:
             
             # Write CSV headers (no paper info)
             headers = [
-                "ID", "Name (EN)", "Name (CN)", "Email", "ORCID", 
+                "ID", "Name (EN)", "Name (CN)", "Email", "ORCID", "Homepage",
                 "Citations", "H-Index", "I10-Index", "Affiliations", "Roles"
             ]
             writer.writerow(headers)
@@ -908,6 +942,7 @@ async def export_authors(format: str = Query("json", description="Export format:
                     author["author_name_cn"],
                     author["email"],
                     author["orcid"],
+                    author["homepage"],
                     author["citations"],
                     author["h_index"],
                     author["i10_index"],

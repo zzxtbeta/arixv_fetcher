@@ -1,7 +1,7 @@
 import { Card, List, Typography, Space, Tag, Pagination, Button, InputNumber, Select, message, Input, DatePicker, Upload, Tooltip } from 'antd'
 import { UploadOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
-import { getLatestPapers, triggerFetch, triggerFetchById, supplementRoles, dataEnrichment, processRole, emailSupplement } from '../api'
+import { getLatestPapers, triggerFetch, triggerFetchById, supplementRoles, dataEnrichment, processRole, emailSupplement, timeSupplement } from '../api'
 import dayjs from 'dayjs'
 import PaperSearch from './PaperSearch'
 
@@ -43,6 +43,12 @@ export default function LatestPapers() {
   const [emailStartId, setEmailStartId] = useState<number | undefined>(1)
   const [emailEndId, setEmailEndId] = useState<number | undefined>(undefined)
   const [emailBatchSize, setEmailBatchSize] = useState<number | undefined>(10)
+  
+  // Time Supplement states
+  const [timeSupplementing, setTimeSupplementing] = useState(false)
+  const [timeStartId, setTimeStartId] = useState<number | undefined>(1)
+  const [timeEndId, setTimeEndId] = useState<number | undefined>(undefined)
+  const [timeBatchSize, setTimeBatchSize] = useState<number | undefined>(10)
 
   const [dateRange, setDateRange] = useState<[string, string]>(() => {
     const today = dayjs().format('YYYY-MM-DD')
@@ -234,6 +240,33 @@ export default function LatestPapers() {
       message.error(e?.message || '邮箱补充失败')
     } finally {
       setEmailSupplementing(false)
+    }
+  }
+
+  async function onTimeSupplement() {
+    setTimeSupplementing(true)
+    try {
+      const params: any = {
+        batch_size: timeBatchSize || 10
+      }
+      
+      if (timeStartId !== undefined) {
+        params.start_id = timeStartId
+      }
+      if (timeEndId !== undefined) {
+        params.end_id = timeEndId
+      }
+      
+      const res = await timeSupplement(params)
+      
+      message.success(`时间补充完成！已处理: ${res.total_processed}, 更新: ${res.total_updated}, 失败: ${res.total_failed}`)
+      
+      // Refresh data after time supplement
+      await load()
+    } catch (e: any) {
+      message.error(e?.message || '时间补充失败')
+    } finally {
+      setTimeSupplementing(false)
     }
   }
 
@@ -496,6 +529,40 @@ export default function LatestPapers() {
                    type="default"
                  >
                    Email Field Supplement
+                 </Button>
+               </Space>
+               <Space wrap>
+                 <Typography.Text type="secondary">Time Supplement ID Range:</Typography.Text>
+                 <InputNumber 
+                   placeholder="Start ID" 
+                   value={timeStartId} 
+                   onChange={(v) => setTimeStartId(v || undefined)}
+                   style={{ width: 100 }}
+                   min={1}
+                 />
+                 <Typography.Text type="secondary">-</Typography.Text>
+                 <InputNumber 
+                   placeholder="End ID" 
+                   value={timeEndId} 
+                   onChange={(v) => setTimeEndId(v || undefined)}
+                   style={{ width: 100 }}
+                   min={1}
+                 />
+                 <Typography.Text type="secondary">Batch:</Typography.Text>
+                 <InputNumber 
+                   placeholder="Batch Size" 
+                   value={timeBatchSize} 
+                   onChange={(v) => setTimeBatchSize(v || undefined)}
+                   style={{ width: 80 }}
+                   min={1}
+                   max={50}
+                 />
+                 <Button 
+                   loading={timeSupplementing} 
+                   onClick={onTimeSupplement}
+                   type="default"
+                 >
+                   Time Field Supplement
                  </Button>
                </Space>
              </Space>

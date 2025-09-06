@@ -1443,6 +1443,15 @@ async def search_person_role_with_tavily(name: str, affiliation: str) -> Optiona
                 answer = response.get('answer', '')
                 results = response.get('results', [])
                 
+                # Log Tavily response for debugging
+                logger.info(f"Tavily answer for {name}: {answer[:200]}..." if answer else f"Tavily answer for {name}: (empty)")
+                logger.info(f"Tavily returned {len(results)} results for {name}")
+                for i, result in enumerate(results[:2]):  # Log first 2 results
+                    title = result.get('title', '')
+                    content = result.get('content', '')
+                    logger.info(f"Result {i+1} - Title: {title[:100]}...")
+                    logger.info(f"Result {i+1} - Content: {content[:300]}...")
+                
                 # Use LLM to extract role from search results
                 extracted_role = await asyncio.to_thread(_extract_role_with_llm, name, affiliation, answer, results)
                 
@@ -1562,13 +1571,6 @@ async def search_person_homepage_with_tavily(name: str, affiliation: str) -> Opt
     }
 
 async def search_person_general_with_tavily(name: str, affiliation: str, search_prompt: str) -> Optional[Dict[str, Any]]:
-    """General Tavily search - TEMPORARILY DISABLED."""
-    # TEMPORARILY DISABLED - Return None to skip Tavily processing
-    logger.info(f"[TAVILY] DISABLED - Skipping general search for {name}")
-    return None
-    
-    # Original function commented out below:
-    #
     """General Tavily web search for person information with custom prompt, API key rotation, and rate limiting.
     
     Args:
@@ -1846,17 +1848,30 @@ def _extract_role_with_llm(name: str, affiliation: str, answer: str, results: Li
         context = "\n\n".join(context_parts)
         
         system_prompt = (
-            "You are a precise role extractor. Given a person's name, their affiliation, "
-            "and web search results about them, extract their professional role/position. "
-            "Return only the role title (e.g., 'Professor', 'Research Scientist', 'CEO', etc.). "
-            "If unclear or not found, return 'Unknown'."
+            "You are an expert role extractor. Your task is to identify a person's professional role/position at a specific target organization. "
+            "CRITICAL INSTRUCTIONS:\n"
+            "1. Focus ONLY on their role at the target affiliation mentioned\n"
+            "2. Look for ANY indication of their job title, position, or role\n"
+            "3. Common role indicators: 'holds the position of', 'works as', 'is a', 'serves as', 'appointed as', 'role as', 'position as'\n"
+            "4. Accept ALL types of roles: Professor, Scientist, Distinguished Scientist, Research Scientist, Engineer, CEO, Director, etc.\n"
+            "5. Extract the COMPLETE role title as mentioned (e.g., 'Distinguished Scientist', not just 'Scientist')\n"
+            "6. If multiple roles are mentioned for the target affiliation, choose the most specific one\n"
+            "7. ONLY return 'Unknown' if absolutely no role information is found for the target affiliation\n"
+            "8. Be generous in interpretation - if there's any reasonable indication of a role, extract it"
         )
         
         user_prompt = (
-            f"Person: {name}\n"
-            f"Affiliation: {affiliation}\n\n"
-            f"Search Results:\n{context}\n\n"
-            f"What is {name}'s role/position at {affiliation}? Please provide only the role title:"
+            f"TASK: Extract {name}'s role at {affiliation}\n\n"
+            f"PERSON: {name}\n"
+            f"TARGET ORGANIZATION: {affiliation}\n\n"
+            f"SEARCH RESULTS TO ANALYZE:\n{context}\n\n"
+            f"ANALYSIS INSTRUCTIONS:\n"
+            f"- Scan the search results for ANY mention of {name}'s role, position, or title at {affiliation}\n"
+            f"- Look for phrases like: 'holds the position of', 'works as', 'is a', 'serves as', 'appointed as'\n"
+            f"- Pay attention to job titles, professional roles, or position descriptions\n"
+            f"- Extract the COMPLETE title (e.g., 'Distinguished Scientist', 'Senior Research Scientist')\n\n"
+            f"QUESTION: What is {name}'s role/position at {affiliation}?\n"
+            f"ANSWER (role title only):"
         )
         
         messages = [
@@ -1868,11 +1883,34 @@ def _extract_role_with_llm(name: str, affiliation: str, answer: str, results: Li
         response = llm.invoke(messages)
         role = response.content.strip() if hasattr(response, 'content') else str(response).strip()
         
-        # Clean up the response
-        if role and role.lower() not in ['unknown', 'unclear', 'not found', '']:
-            logger.info(f"Extracted role for {name}: {role}")
-            return role
+        # Log the raw LLM response for debugging
+        logger.info(f"Raw LLM response for {name} at {affiliation}: '{role}'")
+        
+        # Print debug information directly to stdout for debugging
+        print(f"\n=== DEBUG: Complete Tavily Answer for {name} at {affiliation} ===")
+        print(f"Tavily Answer: {answer}")
+        print(f"\n=== DEBUG: Complete LLM System Prompt ===")
+        print(f"System Prompt: {system_prompt}")
+        print(f"\n=== DEBUG: Complete LLM User Prompt ===")
+        print(f"User Prompt: {user_prompt}")
+        print(f"\n=== DEBUG: Complete Context Sent to LLM ===")
+        print(f"Context: {context}")
+        print(f"=== END DEBUG INFO ===\n")
+        
+        # Clean up the response - be more permissive with role extraction
+        role_cleaned = role.strip().strip('"').strip("'")  # Remove quotes
+        
+        # List of invalid responses that should be rejected
+        invalid_responses = [
+            'unknown', 'unclear', 'not found', '', 'none', 'not specified', 
+            'not mentioned', 'no role found', 'not available', 'n/a'
+        ]
+        
+        if role_cleaned and role_cleaned.lower() not in invalid_responses:
+            logger.info(f"Extracted role for {name}: {role_cleaned}")
+            return role_cleaned
         else:
+            logger.warning(f"No valid role extracted for {name} at {affiliation}. Raw response: '{role}', Cleaned: '{role_cleaned}'")
             return None
             
     except Exception as e:

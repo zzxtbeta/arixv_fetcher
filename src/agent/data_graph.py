@@ -270,9 +270,16 @@ async def process_single_paper(state: Dict[str, Any]) -> Dict[str, Any]:
                     academic_metrics = None
                     try:
                         # 直接使用作者姓名获取学术指标
+                        # 尝试获取作者的机构名称
+                        institution_name = None
+                        if aff:
+                            # 假设aff是列表，取第一个机构的名称
+                            institution_name = aff[0].get('name') if aff[0] else None
+
                         academic_metrics = await asyncio.to_thread(
                             get_author_academic_metrics,
-                            name
+                            name,
+                            institution_name
                         )
                         if academic_metrics:
                             logger.info(f"[OPENALEX] ✓ Retrieved metrics for {name}: citations={academic_metrics.get('citations', 'N/A')}, h-index={academic_metrics.get('h_index', 'N/A')}")
@@ -839,6 +846,11 @@ async def _process_paper_batch_with_context(
                             citations = academic_metrics.get("citations")
                             h_index = academic_metrics.get("h_index")
                             i10_index = academic_metrics.get("i10_index")
+                            # 从 OpenAlex 获取 ORCID
+                            openalex_orcid = academic_metrics.get("orcid")
+                            # 如果 OpenAlex 提供了 ORCID 且当前 ORCID 为空，则更新
+                            if openalex_orcid and not orcid:
+                                orcid = openalex_orcid
                         
                         # If no existing author found by email or orcid, create new one
                         if not author_id:
@@ -856,15 +868,23 @@ async def _process_paper_batch_with_context(
                                 logger.warning(f"Failed to insert author {name_en}: {e}")
                                 continue
                         else:
-                            # Update existing author with academic metrics if available
+                            # Update existing author with academic metrics and ORCID if available
+                            update_fields = []
+                            update_values = []
                             if academic_metrics:
+                                if citations is not None: update_fields.append("citations = COALESCE(%s, citations)"); update_values.append(citations)
+                                if h_index is not None: update_fields.append("h_index = COALESCE(%s, h_index)"); update_values.append(h_index)
+                                if i10_index is not None: update_fields.append("i10_index = COALESCE(%s, i10_index)"); update_values.append(i10_index)
+                                # 仅当 OpenAlex 提供了 ORCID 且数据库中 ORCID 为空时才更新
+                                if openalex_orcid and not orcid:
+                                    update_fields.append("orcid = COALESCE(%s, orcid)"); update_values.append(openalex_orcid)
+
+                            if update_fields:
                                 try:
-                                    await cur.execute(
-                                        "UPDATE authors SET citations = COALESCE(%s, citations), h_index = COALESCE(%s, h_index), i10_index = COALESCE(%s, i10_index) WHERE id = %s",
-                                        (citations, h_index, i10_index, author_id)
-                                    )
+                                    update_query = f"UPDATE authors SET {', '.join(update_fields)} WHERE id = %s"
+                                    await cur.execute(update_query, (*update_values, author_id))
                                 except Exception as e:
-                                    logger.warning(f"Failed to update academic metrics for author {name_en}: {e}")
+                                    logger.warning(f"Failed to update academic metrics or ORCID for author {name_en}: {e}")
                         
                         if not author_id:
                             continue

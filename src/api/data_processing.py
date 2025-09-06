@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from src.agent.resume_manager import resume_manager
 from src.db.database import DatabaseManager
-from src.db.supabase_client import supabase_client
+from src.db.postgres_client import postgres_client
 from src.agent.utils import (
     search_person_role_with_tavily, 
     search_person_homepage_with_tavily, 
@@ -1635,7 +1635,7 @@ async def email_supplement_api(body: EmailSupplementRequest):
         
         while True:
             # Get a batch of authors
-            batch_authors = supabase_client.select(
+            batch_authors = await postgres_client.select(
                 table="authors",
                 columns="id, author_name_en, homepage, email",
                 limit=page_size,
@@ -1731,7 +1731,7 @@ async def email_supplement_api(body: EmailSupplementRequest):
                     
                     if email and confidence in ['high', 'medium']:
                         try:
-                            supabase_client.update(
+                            await postgres_client.update(
                                 table="authors",
                                 values={"email": email},
                                 filters={"id": author_id}
@@ -1752,7 +1752,7 @@ async def email_supplement_api(body: EmailSupplementRequest):
                     if affiliations_data and confidence in ['high', 'medium']:
                         try:
                             # Get author's existing affiliations with institution names
-                            existing_affiliations = supabase_client.select(
+                            existing_affiliations = await postgres_client.select(
                                 table="author_affiliation",
                                 columns="id, affiliation_id, start_date, end_date",
                                 filters={"author_id": author_id}
@@ -1763,7 +1763,7 @@ async def email_supplement_api(body: EmailSupplementRequest):
                             if existing_affiliations:
                                 aff_ids = [aff['affiliation_id'] for aff in existing_affiliations if aff['affiliation_id']]
                                 if aff_ids:
-                                    affiliations_info = supabase_client.select(
+                                    affiliations_info = await postgres_client.select(
                                         table="affiliations",
                                         columns="id, aff_name",
                                         filters={"id": aff_ids}
@@ -1899,7 +1899,7 @@ async def email_supplement_api(body: EmailSupplementRequest):
                                             updated_fields.append(f"end_date: current (institution: {institution})")
                                             
                                         if update_values:
-                                            supabase_client.update(
+                                            await postgres_client.update(
                                                 table="author_affiliation",
                                                 values=update_values,
                                                 filters={"id": target_aff['id']}
@@ -1951,3 +1951,228 @@ async def email_supplement_api(body: EmailSupplementRequest):
     except Exception as e:
         logger.error(f"Error in email supplement: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Email supplement failed: {str(e)}")
+
+
+@router.post("/time-supplement")
+async def time_supplement_api(body: EmailSupplementRequest):  # Reuse EmailSupplementRequest for similar parameters
+    """
+    Supplement start_time and end_time for author_affiliation records using Tavily API
+    """
+    try:
+        batch_size = body.batch_size or 10
+        start_id = body.start_id
+        end_id = body.end_id
+        
+        logger.info(f"Starting time supplement with batch_size={batch_size}, start_id={start_id}, end_id={end_id}")
+        
+        # Get author_affiliation records where start_date or end_date is null
+        query_columns = "id, author_id, affiliation_id, role, start_date, end_date"
+        
+        # Use PostgreSQL client for complex queries with range filters
+        filters = {}
+        if start_id is not None:
+            filters["id__gte"] = start_id
+        if end_id is not None:
+            filters["id__lte"] = end_id
+            
+        all_records = await postgres_client.select(
+            table="author_affiliation",
+            columns=query_columns,
+            filters=filters,
+            order_by=("id", True)
+        )
+        
+        if not all_records:
+            return {
+                "total_processed": 0,
+                "total_updated": 0,
+                "total_failed": 0,
+                "message": "No records found to process"
+            }
+            
+        # Filter records that need time supplement (start_date or end_date is null)
+        records_to_process = [
+            record for record in all_records 
+            if record.get('start_date') is None or record.get('end_date') is None
+        ]
+        
+        if not records_to_process:
+            return {
+                "total_processed": 0,
+                "total_updated": 0,
+                "total_failed": 0,
+                "message": "No records with missing time information found"
+            }
+            
+        logger.info(f"Found {len(records_to_process)} records needing time supplement")
+        
+        total_processed = 0
+        total_updated = 0
+        total_failed = 0
+        
+        # Process in batches
+        for i in range(0, len(records_to_process), batch_size):
+            batch = records_to_process[i:i + batch_size]
+            logger.info(f"Processing batch {i//batch_size + 1}: {len(batch)} records")
+            
+            # Get author and affiliation info for this batch
+            author_ids = [record['author_id'] for record in batch]
+            affiliation_ids = [record['affiliation_id'] for record in batch]
+            
+            # Get author names
+            authors_info = await postgres_client.select_in(
+                table="authors",
+                column="id",
+                values=author_ids,
+                columns="id, author_name_en"
+            )
+            author_name_map = {author['id']: author['author_name_en'] for author in authors_info}
+            
+            # Get affiliation names
+            affiliations_info = await postgres_client.select_in(
+                table="affiliations",
+                column="id",
+                values=affiliation_ids,
+                columns="id, aff_name"
+            )
+            affiliation_name_map = {aff['id']: aff['aff_name'] for aff in affiliations_info}
+            
+            # Process each record in the batch
+            for record in batch:
+                try:
+                    total_processed += 1
+                    
+                    author_name = author_name_map.get(record['author_id'], 'Unknown Author')
+                    affiliation_name = affiliation_name_map.get(record['affiliation_id'], 'Unknown Affiliation')
+                    role = record.get('role', 'researcher')
+                    
+                    # Construct search query
+                    search_query = f"When did {author_name} start and end his career as a/an {role} at {affiliation_name}?"
+                    
+                    logger.info(f"Searching time info for: {search_query}")
+                    
+                    # Call Tavily API to search for time information
+                    from src.agent.utils import search_person_general_with_tavily
+                    search_result = await search_person_general_with_tavily(author_name, affiliation_name, search_query)
+                    
+                    if not search_result or not search_result.get('search_successful'):
+                        logger.warning(f"No search results for record {record['id']}")
+                        total_failed += 1
+                        continue
+                        
+                    # Combine answer and results for LLM processing
+                    search_content = f"Answer: {search_result.get('answer', '')}\n\nResults:\n"
+                    for result in search_result.get('results', []):
+                        search_content += f"Title: {result.get('title', '')}\nContent: {result.get('content', '')}\nURL: {result.get('url', '')}\n\n"
+                    
+                    # Extract time information using LLM
+                    time_info = await extract_time_info_with_llm(author_name, affiliation_name, role, search_content)
+                    
+                    if time_info and (time_info.get('start_date') or time_info.get('end_date')):
+                        # Update the record
+                        update_values = {}
+                        
+                        if time_info.get('start_date') and record.get('start_date') is None:
+                            normalized_start_date = normalize_date_for_db(time_info['start_date'])
+                            update_values['start_date'] = normalized_start_date
+                            
+                        if time_info.get('end_date') and record.get('end_date') is None:
+                            if time_info['end_date'].lower() in ['present', 'current', 'ongoing']:
+                                # Don't update end_date for current positions
+                                pass
+                            else:
+                                normalized_end_date = normalize_date_for_db(time_info['end_date'])
+                                update_values['end_date'] = normalized_end_date
+                        
+                        if update_values:
+                            await postgres_client.update(
+                                table="author_affiliation",
+                                values=update_values,
+                                filters={"id": record['id']}
+                            )
+                            total_updated += 1
+                            logger.info(f"Updated record {record['id']} with time info: {update_values}")
+                        else:
+                            logger.info(f"No new time information to update for record {record['id']}")
+                    else:
+                        logger.warning(f"No valid time information extracted for record {record['id']}")
+                        total_failed += 1
+                        
+                except Exception as e:
+                    logger.error(f"Error processing record {record['id']}: {str(e)}")
+                    total_failed += 1
+                    
+            # Add delay between batches to avoid rate limiting
+            if i + batch_size < len(records_to_process):
+                await asyncio.sleep(1)
+                
+        logger.info(f"Time supplement completed: processed={total_processed}, updated={total_updated}, failed={total_failed}")
+        
+        return {
+            "total_processed": total_processed,
+            "total_updated": total_updated,
+            "total_failed": total_failed,
+            "message": f"Time supplement completed successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in time supplement: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Time supplement failed: {str(e)}")
+
+
+async def extract_time_info_with_llm(author_name: str, affiliation_name: str, role: str, search_content: str) -> dict:
+    """
+    Extract start and end time information using LLM from search results
+    """
+    try:
+        from src.agent.utils import create_llm
+        
+        llm_client = create_llm()
+        if not llm_client:
+            logger.error("LLM client not available")
+            return None
+            
+        prompt = f"""
+You are a time information extraction expert. Your task is to extract the start and end dates of {author_name}'s career as a {role} at {affiliation_name} from the provided search results.
+
+Search Results:
+{search_content}
+
+Please extract the following information and return it in JSON format:
+{{
+    "start_date": "YYYY-MM-DD or YYYY format, or null if not found",
+    "end_date": "YYYY-MM-DD or YYYY format, or 'present' if currently active, or null if not found",
+    "confidence": "high/medium/low based on the clarity of the information"
+}}
+
+Rules:
+1. Only extract dates that are clearly associated with {author_name} at {affiliation_name}
+2. Be conservative - if you're not confident about a date, return null
+3. Use YYYY-MM-DD format when possible, YYYY when only year is available
+4. Return 'present' for end_date if the person is currently in the position
+5. Return valid JSON only, no additional text
+"""
+        
+        messages = [
+            {"role": "system", "content": "You are a precise time information extraction expert. Return only valid JSON."},
+            {"role": "user", "content": prompt}
+        ]
+        
+        response = llm_client.invoke(messages)
+        
+        if response:
+            content = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+            logger.info(f"LLM response for time extraction: {content}")
+            
+            # Parse JSON response
+            import json
+            try:
+                time_info = json.loads(content)
+                return time_info
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse LLM JSON response: {e}")
+                return None
+                
+    except Exception as e:
+        logger.error(f"Error in LLM time extraction: {str(e)}")
+        return None
