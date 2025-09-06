@@ -40,6 +40,18 @@ logger = logging.getLogger(__name__)
 ARXIV_QUERY_API = "https://export.arxiv.org/api/query"
 HTTP_HEADERS = {"User-Agent": "arxiv-scraper/0.1 (+https://example.com)"}
 
+# Tavily API configuration
+_TAVILY_ENABLED = os.getenv("TAVILY_ENABLED", "false").lower() in ("true", "1", "yes", "on")
+
+def _is_quota_exhausted_error(error_message: str) -> bool:
+    """Check if the error message indicates API quota exhaustion"""
+    quota_indicators = [
+        "quota", "limit", "rate limit", "too many requests",
+        "exceeded", "throttled", "429", "usage limit"
+    ]
+    error_lower = error_message.lower()
+    return any(indicator in error_lower for indicator in quota_indicators)
+
 # Global variables for session management and caching
 _PDF_SESSION = None
 _ORCID_SESSION = None
@@ -1484,6 +1496,59 @@ async def search_person_role_with_tavily(name: str, affiliation: str) -> Optiona
         "search_successful": False
     }
 
+async def search_person_affiliation_details_with_tavily(name: str, affiliation: str, homepage: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Search for person's role, start_date, and end_date at specific affiliation using Tavily API.
+    
+    Args:
+        name: Person's name
+        affiliation: Institution name
+        homepage: Person's homepage URL (optional)
+        
+    Returns:
+        Dict with search results or None if failed
+    """
+    if not _TAVILY_ENABLED:
+        return None
+        
+    try:
+        # Build query based on whether homepage is available
+        if homepage:
+            query = f"What is {name}'s role at {affiliation}, as well as the start and end times, please refer to {homepage}"
+        else:
+            query = f"What is {name}'s role at {affiliation}, as well as the start and end times"
+            
+        logger.info(f"Tavily affiliation details search: {query}")
+        
+        # Use comprehensive search for better results
+        client = get_tavily_client()
+        if not client:
+            return {"search_successful": False, "error": "Tavily client not available"}
+            
+        response = await client.search(
+            query=query,
+            search_depth="advanced",
+            max_results=5,
+            include_answer=True,
+            include_raw_content=False
+        )
+        
+        if response and response.get('results'):
+            return {
+                "search_successful": True,
+                "answer": response.get('answer', ''),
+                "results": response.get('results', [])
+            }
+        else:
+            return {"search_successful": False, "error": "No results found"}
+            
+    except Exception as e:
+        if _is_quota_exhausted_error(str(e)):
+            logger.warning(f"Tavily API quota exhausted for {name}")
+            return {"search_successful": False, "error": "API quota exhausted"}
+        else:
+            logger.error(f"Tavily affiliation details search error: {e}")
+            return {"search_successful": False, "error": str(e)}
+
 async def search_person_homepage_with_tavily(name: str, affiliation: str) -> Optional[Dict[str, Any]]:
     """Search for person's homepage link using Tavily API.
     
@@ -1653,6 +1718,194 @@ async def search_person_general_with_tavily(name: str, affiliation: str, search_
             "affiliation": affiliation,
             "search_prompt": search_prompt
         }
+
+def _normalize_date_for_db(date_str: str) -> Optional[str]:
+    """Normalize various date formats to YYYY-MM-DD for database DATE type.
+    
+    Args:
+        date_str: Date string in various formats
+        
+    Returns:
+        Normalized date string in YYYY-MM-DD format or None if invalid
+    """
+    if not date_str or date_str.lower() in ['null', 'none', '', 'present']:
+        return None
+        
+    try:
+        import re
+        from datetime import datetime
+        
+        # Clean the input
+        cleaned = date_str.strip()
+        
+        # Handle various date formats
+        # YYYY-MM-DD (already correct)
+        if re.match(r'^\d{4}-\d{2}-\d{2}$', cleaned):
+            return cleaned
+            
+        # YYYY-MM (add day as 01)
+        if re.match(r'^\d{4}-\d{2}$', cleaned):
+            return f"{cleaned}-01"
+            
+        # YYYY (add month and day as 01)
+        if re.match(r'^\d{4}$', cleaned):
+            return f"{cleaned}-01-01"
+            
+        # MM/DD/YYYY or MM-DD-YYYY
+        match = re.match(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$', cleaned)
+        if match:
+            month, day, year = match.groups()
+            return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+            
+        # DD/MM/YYYY or DD-MM-YYYY (European format)
+        match = re.match(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$', cleaned)
+        if match:
+            day, month, year = match.groups()
+            # Assume European format if day > 12
+            if int(day) > 12:
+                return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+                
+        # Try parsing with common formats
+        for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%m/%d/%Y', '%d/%m/%Y', '%Y-%m', '%Y']:
+            try:
+                parsed_date = datetime.strptime(cleaned, fmt)
+                return parsed_date.strftime('%Y-%m-%d')
+            except ValueError:
+                continue
+                
+        # If all parsing fails, return None
+        logger.warning(f"Could not parse date format: {date_str}")
+        return None
+        
+    except Exception as e:
+        logger.warning(f"Date normalization error for '{date_str}': {e}")
+        return None
+
+def _extract_affiliation_details_with_llm(name: str, affiliation: str, answer: str, results: List[Dict[str, Any]]) -> Dict[str, Optional[str]]:
+    """Extract role, start_date, and end_date using LLM from affiliation search results.
+    
+    Args:
+        name: Person's name
+        affiliation: Institution name
+        answer: Tavily's answer summary
+        results: List of search result dictionaries
+        
+    Returns:
+        Dict with extracted fields: role, start_date, end_date
+    """
+    try:
+        # Import LLM function
+        llm = create_llm()
+        
+        # Prepare context from search results
+        context_parts = []
+        if answer:
+            context_parts.append(f"Summary: {answer}")
+        
+        for i, result in enumerate(results[:5]):  # Use top 5 results
+            title = result.get('title', '')
+            content = result.get('content', '')
+            url = result.get('url', '')
+            if content:
+                context_parts.append(f"Result {i+1} ({url}): {title}\n{content[:800]}...")
+        
+        context = "\n\n".join(context_parts)
+        
+        system_prompt = (
+            "You are a precise information extractor. Given a person's name, their affiliation, "
+            "and web search results, extract the following information:\n"
+            "1. Role/position at the specified institution\n"
+            "2. Start date of their position (YYYY-MM-DD format if available, or YYYY)\n"
+            "3. End date of their position (YYYY-MM-DD format if available, or 'present' if current)\n\n"
+            "Return the information in JSON format with keys: role, start_date, end_date.\n"
+            "If any information is not found or unclear, use null for that field.\n"
+            "Be conservative - only extract information you are confident about."
+        )
+        
+        user_prompt = (
+            f"Person: {name}\n"
+            f"Institution: {affiliation}\n\n"
+            f"Search Results:\n{context}\n\n"
+            f"Please extract the role, start_date, and end_date for {name} at {affiliation}:"
+        )
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+        
+        # Use LLM to extract information
+        response = llm.invoke(messages)
+        response_text = response.content.strip() if hasattr(response, 'content') else str(response).strip()
+        
+        # Try to parse JSON response
+        try:
+            import json
+            import re
+            
+            # Clean the response text - remove markdown code blocks and extract JSON
+            cleaned_text = response_text
+            
+            # Try to extract JSON from markdown code blocks
+            json_match = re.search(r'```json\s*\n?(.*?)\n?```', cleaned_text, re.DOTALL)
+            if json_match:
+                cleaned_text = json_match.group(1).strip()
+            else:
+                # Fallback: remove markdown markers
+                cleaned_text = re.sub(r'```json\s*', '', cleaned_text)
+                cleaned_text = re.sub(r'```.*$', '', cleaned_text, flags=re.MULTILINE)
+                cleaned_text = cleaned_text.strip()
+                
+            # Additional cleanup: remove any trailing explanation text after }
+            brace_end = cleaned_text.rfind('}')
+            if brace_end != -1:
+                cleaned_text = cleaned_text[:brace_end + 1]
+            
+            extracted_info = json.loads(cleaned_text)
+            
+            # Validate and clean the extracted information
+            result = {}
+            
+            # Role validation
+            role = extracted_info.get('role')
+            if role and isinstance(role, str) and role.lower() not in ['null', 'none', '']:
+                result['role'] = role.strip()
+            else:
+                result['role'] = None
+            
+            # Date validation and formatting for database DATE type
+            start_date = extracted_info.get('start_date')
+            if start_date and isinstance(start_date, str) and start_date.lower() not in ['null', 'none', '', 'present']:
+                # Clean and validate date format
+                cleaned_start = start_date.strip()
+                # Convert various date formats to YYYY-MM-DD for database DATE type
+                result['start_date'] = _normalize_date_for_db(cleaned_start)
+            else:
+                result['start_date'] = None
+                
+            end_date = extracted_info.get('end_date')
+            if end_date and isinstance(end_date, str) and end_date.lower() not in ['null', 'none', '']:
+                # Convert 'present' to NULL for database consistency
+                if end_date.strip().lower() == 'present':
+                    result['end_date'] = None
+                else:
+                    # Clean and validate date format
+                    cleaned_end = end_date.strip()
+                    # Convert various date formats to YYYY-MM-DD for database DATE type
+                    result['end_date'] = _normalize_date_for_db(cleaned_end)
+            else:
+                result['end_date'] = None
+            
+            logger.info(f"Extracted affiliation details for {name} at {affiliation}: {result}")
+            return result
+            
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to parse JSON response for {name} at {affiliation}: {response_text}")
+            return {'role': None, 'start_date': None, 'end_date': None}
+            
+    except Exception as e:
+        logger.error(f"LLM affiliation details extraction error: {e}")
+        return {'role': None, 'start_date': None, 'end_date': None}
 
 def _extract_homepage_link_with_llm(name: str, affiliation: str, answer: str, results: List[Dict[str, Any]]) -> Optional[str]:
     """Extract homepage link using LLM from search results.

@@ -361,6 +361,22 @@ async def process_tavily_homepage_for_paper(state: Dict[str, Any]) -> Dict[str, 
                         if extracted_link:
                             item["homepage"] = extracted_link
                             logger.info(f"[TAVILY] ✓ Extracted homepage for {name}: {extracted_link}")
+                            
+                            # 立即提取role信息
+                            try:
+                                from src.agent.utils import search_person_role_with_tavily
+                                role_result = await search_person_role_with_tavily(name, affiliation)
+                                if role_result and role_result.get("search_successful"):
+                                    extracted_role = role_result.get("extracted_role")
+                                    if extracted_role:
+                                        item["role"] = extracted_role.strip()
+                                        logger.info(f"[TAVILY] ✓ Extracted role for {name}: {extracted_role}")
+                                    else:
+                                        logger.info(f"[TAVILY] ✗ No role extracted for {name}")
+                                else:
+                                    logger.info(f"[TAVILY] ✗ Role search failed for {name}")
+                            except Exception as role_e:
+                                logger.warning(f"[TAVILY] Error getting role for {name}: {role_e}")
                         else:
                             logger.info(f"[TAVILY] ✗ LLM could not extract valid homepage link for {name}")
                     else:
@@ -390,36 +406,83 @@ async def process_homepage_extraction_for_paper(state: Dict[str, Any]) -> Dict[s
         homepage = item.get("homepage")
         affiliations = item.get("affiliations", [])
         
-        if not name or not homepage:
+        if not name:
             continue
             
-        try:
-            # 爬取homepage内容并提取信息
-            homepage_content = await crawl_homepage(homepage)
-            if homepage_content:
-                # 使用LLM提取email和职位信息
-                extracted_info = await extract_email_and_dates_with_llm(
-                    name, homepage_content, affiliations[0] if affiliations else ""
-                )
+        # First, extract affiliation details using Tavily API for each affiliation
+        for aff_name in affiliations:
+            if not aff_name:
+                continue
                 
-                if extracted_info:
-                    if extracted_info.get("email"):
-                        item["email"] = extracted_info["email"]
-                    if extracted_info.get("role"):
-                        item["role"] = extracted_info["role"]
-                    if extracted_info.get("start_date"):
-                        item["start_date"] = extracted_info["start_date"]
-                    if extracted_info.get("end_date"):
-                        item["end_date"] = extracted_info["end_date"]
+            try:
+                # Import the new functions
+                from src.agent.utils import search_person_affiliation_details_with_tavily, _extract_affiliation_details_with_llm
+                
+                # Search for affiliation details with homepage reference if available
+                details_result = await search_person_affiliation_details_with_tavily(name, aff_name, homepage)
+                
+                if details_result and details_result.get("search_successful"):
+                    tavily_answer = details_result.get('answer', '')
+                    tavily_results = details_result.get('results', [])
                     
-                    logger.info(f"[HOMEPAGE] ✓ Extracted info for {name}: {extracted_info}")
+                    if tavily_answer or tavily_results:
+                        # Extract role, start_date, end_date using LLM
+                        extracted_details = _extract_affiliation_details_with_llm(
+                            name, aff_name, tavily_answer, tavily_results
+                        )
+                        
+                        # Store the extracted details in the item
+                        if extracted_details.get('role'):
+                            item["role"] = extracted_details['role']
+                            logger.info(f"[TAVILY] ✓ Extracted role for {name} at {aff_name}: {extracted_details['role']}")
+                        
+                        if extracted_details.get('start_date'):
+                            item["start_date"] = extracted_details['start_date']
+                            logger.info(f"[TAVILY] ✓ Extracted start_date for {name} at {aff_name}: {extracted_details['start_date']}")
+                        
+                        if extracted_details.get('end_date'):
+                            item["end_date"] = extracted_details['end_date']
+                            logger.info(f"[TAVILY] ✓ Extracted end_date for {name} at {aff_name}: {extracted_details['end_date']}")
+                        
+                        if not any(extracted_details.values()):
+                            logger.info(f"[TAVILY] ✗ No valid affiliation details extracted for {name} at {aff_name}")
+                    else:
+                        logger.info(f"[TAVILY] ✗ No answer or results for affiliation details of {name} at {aff_name}")
                 else:
-                    logger.info(f"[HOMEPAGE] ✗ No info extracted from homepage for {name}")
-            else:
-                logger.warning(f"[HOMEPAGE] Failed to crawl homepage for {name}: {homepage}")
-                
-        except Exception as e:
-            logger.warning(f"[HOMEPAGE] Error processing homepage for {name}: {e}")
+                    logger.info(f"[TAVILY] ✗ Affiliation details search failed for {name} at {aff_name}")
+                    
+            except Exception as aff_e:
+                logger.warning(f"[TAVILY] Error getting affiliation details for {name} at {aff_name}: {aff_e}")
+        
+        # Then, if homepage exists, crawl it for additional information
+        if homepage:
+            try:
+                # 爬取homepage内容并提取信息
+                homepage_content = await crawl_homepage(homepage)
+                if homepage_content:
+                    # 使用LLM提取email和职位信息
+                    extracted_info = await extract_email_and_dates_with_llm(
+                        name, homepage_content, affiliations[0] if affiliations else ""
+                    )
+                    
+                    if extracted_info:
+                        if extracted_info.get("email"):
+                            item["email"] = extracted_info["email"]
+                        if extracted_info.get("role"):
+                            item["role"] = extracted_info["role"]
+                        if extracted_info.get("start_date"):
+                            item["start_date"] = extracted_info["start_date"]
+                        if extracted_info.get("end_date"):
+                            item["end_date"] = extracted_info["end_date"]
+                        
+                        logger.info(f"[HOMEPAGE] ✓ Extracted info for {name}: {extracted_info}")
+                    else:
+                        logger.info(f"[HOMEPAGE] ✗ No info extracted from homepage for {name}")
+                else:
+                    logger.warning(f"[HOMEPAGE] Failed to crawl homepage for {name}: {homepage}")
+                    
+            except Exception as e:
+                logger.warning(f"[HOMEPAGE] Error processing homepage for {name}: {e}")
             
         # 如果从homepage没有获取到role信息，尝试使用Tavily API
         if not item.get("role") and _TAVILY_ENABLED and affiliations:
@@ -703,21 +766,33 @@ async def _process_paper_batch_with_context(
                         continue
 
                     # Authors and author_paper
-                    # Build email, academic metrics, and homepage mapping from author_affiliations
+                    # Build email, academic metrics, homepage, role, and date mapping from author_affiliations
                     author_email_map = {}
                     author_metrics_map = {}
                     author_homepage_map = {}
+                    author_role_map = {}
+                    author_start_date_map = {}
+                    author_end_date_map = {}
                     for item in p.get("author_affiliations", []) or []:
                         name = (item.get("name") or "").strip()
                         email = item.get("email")
                         academic_metrics = item.get("academic_metrics")
                         homepage = item.get("homepage")
+                        role = item.get("role")
+                        start_date = item.get("start_date")
+                        end_date = item.get("end_date")
                         if name and email:
                             author_email_map[name] = email
                         if name and academic_metrics:
                             author_metrics_map[name] = academic_metrics
                         if name and homepage:
                             author_homepage_map[name] = homepage
+                        if name and role:
+                            author_role_map[name] = role
+                        if name and start_date:
+                            author_start_date_map[name] = start_date
+                        if name and end_date:
+                            author_end_date_map[name] = end_date
                     
                     for idx, name_en in enumerate(p.get("authors", []), start=1):
                         # First check if we already processed this author in current transaction
@@ -902,8 +977,10 @@ async def _process_paper_batch_with_context(
                         if not author_id:
                             continue
                         
-                        # Get role information for this author
-                        author_role = item.get("role")
+                        # Get role and date information for this author
+                        author_role = author_role_map.get(name)
+                        author_start_date = author_start_date_map.get(name)
+                        author_end_date = author_end_date_map.get(name)
                         
                         for aff_name in item.get("affiliations") or []:
                             if not aff_name:
@@ -1000,7 +1077,6 @@ builder.add_node("process_single_paper", process_single_paper)
 builder.add_node("collect_single_paper_results", collect_single_paper_results)
 builder.add_node("process_openalex_for_paper", process_openalex_for_paper)
 builder.add_node("process_tavily_homepage_for_paper", process_tavily_homepage_for_paper)
-builder.add_node("process_homepage_extraction_for_paper", process_homepage_extraction_for_paper)
 builder.add_node("merge_paper_results", merge_paper_results)
 builder.add_node("upsert_papers", upsert_papers)
 
@@ -1016,10 +1092,9 @@ builder.add_conditional_edges(
     "collect_single_paper_results",
     dispatch_enrichment_processing,
 )
-# Connect enrichment processing nodes: OpenAlex and Tavily run in parallel, then homepage extraction
+# Connect enrichment processing nodes: OpenAlex and Tavily run in parallel
 builder.add_edge("process_openalex_for_paper", "merge_paper_results")
-builder.add_edge("process_tavily_homepage_for_paper", "process_homepage_extraction_for_paper")
-builder.add_edge("process_homepage_extraction_for_paper", "merge_paper_results")
+builder.add_edge("process_tavily_homepage_for_paper", "merge_paper_results")
 builder.add_edge("merge_paper_results", "upsert_papers")
 
 # Connect upsert_papers to end
