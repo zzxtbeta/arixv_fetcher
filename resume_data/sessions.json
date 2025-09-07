@@ -978,5 +978,33 @@
     "api_exhausted_time": null,
     "current_api_key_index": 0,
     "error_message": null
+  },
+  "batch_20250906_234638": {
+    "session_id": "batch_20250906_234638",
+    "source_file": "api_upload",
+    "total_papers": 1,
+    "processed_papers": 0,
+    "failed_papers": 0,
+    "skipped_papers": 0,
+    "start_time": "2025-09-06T23:46:38.844164+00:00",
+    "last_update_time": "2025-09-06T23:46:38.844164+00:00",
+    "status": "pending",
+    "api_exhausted_time": null,
+    "current_api_key_index": 0,
+    "error_message": null
+  },
+  "batch_20250906_235805": {
+    "session_id": "batch_20250906_235805",
+    "source_file": "api_upload",
+    "total_papers": 1,
+    "processed_papers": 0,
+    "failed_papers": 0,
+    "skipped_papers": 0,
+    "start_time": "2025-09-06T23:58:05.183209+00:00",
+    "last_update_time": "2025-09-06T23:58:05.183209+00:00",
+    "status": "pending",
+    "api_exhausted_time": null,
+    "current_api_key_index": 0,
+    "error_message": null
   }
 }

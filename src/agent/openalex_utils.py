@@ -663,13 +663,201 @@ openalex_client = OpenAlexIntegration()
 
 
 # 便捷函数
+def _normalize_institution_name(institution_name: str) -> str:
+    """
+    标准化机构名称，去除常见的变体和缩写
+    """
+    if not institution_name:
+        return ""
+    
+    # 转换为小写并去除多余空格
+    normalized = re.sub(r'\s+', ' ', institution_name.lower().strip())
+    
+    # 去除常见的后缀和前缀
+    suffixes_to_remove = [
+        r'\s*,?\s*usa?$',
+        r'\s*,?\s*united states$',
+        r'\s*,?\s*china$',
+        r'\s*,?\s*uk$',
+        r'\s*,?\s*united kingdom$',
+        r'\s*,?\s*inc\.?$',
+        r'\s*,?\s*ltd\.?$',
+        r'\s*,?\s*corp\.?$',
+        r'\s*,?\s*corporation$',
+        r'\s*,?\s*company$',
+        r'\s*,?\s*co\.?$'
+    ]
+    
+    for suffix in suffixes_to_remove:
+        normalized = re.sub(suffix, '', normalized)
+    
+    # 标准化常见词汇
+    word_replacements = {
+        r'\buniv\.?\b': 'university',
+        r'\binst\.?\b': 'institute',
+        r'\btech\.?\b': 'technology',
+        r'\bcoll\.?\b': 'college',
+        r'\bdept\.?\b': 'department',
+        r'\blab\.?\b': 'laboratory',
+        r'\bres\.?\b': 'research',
+        r'\bctr\.?\b': 'center',
+        r'\bcentre\b': 'center',
+        r'\b&\b': 'and',
+        r'\bint\'?l\b': 'international'
+    }
+    
+    for pattern, replacement in word_replacements.items():
+        normalized = re.sub(pattern, replacement, normalized)
+    
+    # 去除标点符号和多余空格
+    normalized = re.sub(r'[^\w\s]', ' ', normalized)
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    
+    return normalized
+
+
+def _get_institution_aliases() -> Dict[str, List[str]]:
+    """
+    获取机构名称别名映射
+    """
+    return {
+        # MIT 相关
+        'massachusetts institute of technology': ['mit', 'mass inst tech', 'massachusetts inst technology'],
+        'mit': ['massachusetts institute of technology', 'mass inst tech'],
+        
+        # Stanford 相关
+        'stanford university': ['stanford', 'stanford univ'],
+        'stanford': ['stanford university'],
+        
+        # Harvard 相关
+        'harvard university': ['harvard', 'harvard univ'],
+        'harvard': ['harvard university'],
+        
+        # UC Berkeley 相关
+        'university of california berkeley': ['uc berkeley', 'berkeley', 'ucb', 'cal berkeley'],
+        'uc berkeley': ['university of california berkeley', 'berkeley'],
+        'berkeley': ['university of california berkeley', 'uc berkeley'],
+        
+        # CMU 相关
+        'carnegie mellon university': ['cmu', 'carnegie mellon', 'carnegie mellon univ'],
+        'cmu': ['carnegie mellon university'],
+        
+        # Caltech 相关
+        'california institute of technology': ['caltech', 'cal tech'],
+        'caltech': ['california institute of technology'],
+        
+        # 清华大学相关
+        'tsinghua university': ['tsinghua', 'tsinghua univ', 'thu'],
+        'tsinghua': ['tsinghua university'],
+        
+        # 北京大学相关
+        'peking university': ['pku', 'beijing university', 'peking univ'],
+        'pku': ['peking university'],
+        
+        # 中科院相关
+        'chinese academy of sciences': ['cas', 'chinese acad sci'],
+        'cas': ['chinese academy of sciences'],
+        
+        # 其他常见机构
+        'university of washington': ['uw', 'washington university'],
+        'georgia institute of technology': ['georgia tech', 'gatech'],
+        'university of illinois urbana champaign': ['uiuc', 'illinois'],
+        'new york university': ['nyu'],
+        'university of southern california': ['usc'],
+        'university of california los angeles': ['ucla'],
+        'university of california san diego': ['ucsd'],
+        'university of michigan': ['umich', 'michigan'],
+        'princeton university': ['princeton'],
+        'yale university': ['yale'],
+        'columbia university': ['columbia'],
+        'cornell university': ['cornell'],
+        'university of pennsylvania': ['upenn', 'penn'],
+        'johns hopkins university': ['jhu', 'johns hopkins'],
+        'northwestern university': ['northwestern'],
+        'duke university': ['duke'],
+        'university of chicago': ['uchicago'],
+        'rice university': ['rice'],
+        'vanderbilt university': ['vanderbilt'],
+        'emory university': ['emory'],
+        'university of texas austin': ['ut austin', 'texas'],
+        'texas a m university': ['tamu', 'texas am'],
+        'university of wisconsin madison': ['uw madison', 'wisconsin'],
+        'university of minnesota': ['umn', 'minnesota'],
+        'ohio state university': ['osu', 'ohio state'],
+        'pennsylvania state university': ['penn state', 'psu'],
+        'purdue university': ['purdue'],
+        'university of florida': ['uf', 'florida'],
+        'university of north carolina chapel hill': ['unc', 'north carolina'],
+        'virginia tech': ['vt', 'virginia polytechnic'],
+        'arizona state university': ['asu', 'arizona state']
+    }
+
+
+def _calculate_institution_similarity(inst1: str, inst2: str) -> float:
+    """
+    计算两个机构名称的相似度
+    结合标准化、别名匹配和字符串相似度
+    """
+    if not inst1 or not inst2:
+        return 0.0
+    
+    # 标准化机构名称
+    norm1 = _normalize_institution_name(inst1)
+    norm2 = _normalize_institution_name(inst2)
+    
+    # 完全匹配
+    if norm1 == norm2:
+        return 1.0
+    
+    # 检查别名映射
+    aliases = _get_institution_aliases()
+    
+    # 检查 inst1 是否是 inst2 的别名
+    if norm2 in aliases:
+        if norm1 in aliases[norm2]:
+            return 0.95
+    
+    # 检查 inst2 是否是 inst1 的别名
+    if norm1 in aliases:
+        if norm2 in aliases[norm1]:
+            return 0.95
+    
+    # 检查是否都是某个机构的别名
+    for canonical, alias_list in aliases.items():
+        if norm1 in alias_list and norm2 in alias_list:
+            return 0.9
+        if (norm1 == canonical and norm2 in alias_list) or (norm2 == canonical and norm1 in alias_list):
+            return 0.95
+    
+    # 字符串相似度匹配
+    similarity = SequenceMatcher(None, norm1, norm2).ratio()
+    
+    # 检查关键词包含关系
+    words1 = set(norm1.split())
+    words2 = set(norm2.split())
+    
+    # 如果一个是另一个的子集，给予较高分数
+    if words1.issubset(words2) or words2.issubset(words1):
+        similarity = max(similarity, 0.8)
+    
+    # 检查重要关键词重叠
+    important_words = {'university', 'institute', 'technology', 'college', 'academy', 'school'}
+    common_important = words1.intersection(words2).intersection(important_words)
+    if common_important:
+        # 计算重叠比例
+        overlap_ratio = len(words1.intersection(words2)) / max(len(words1), len(words2))
+        similarity = max(similarity, overlap_ratio * 0.9)
+    
+    return similarity
+
+
 def get_author_academic_metrics(
     author_name: str,
     institution_name: Optional[str] = None
 ) -> Optional[Dict[str, Union[int, str]]]:
     """
     根据作者姓名和机构获取学术指标
-    严格要求机构匹配，如果机构不匹配则返回 None
+    支持模糊机构匹配，包括别名和相似度匹配
     """
     try:
         # 直接按姓名搜索作者
@@ -683,73 +871,67 @@ def get_author_academic_metrics(
             logger.warning(f"No authors found for {author_name}")
             return None
         
-        # 如果没有提供机构信息，无法进行精确匹配
+        # 如果没有提供机构信息，返回第一个匹配的作者
         if not institution_name:
-            logger.warning(f"No institution provided for {author_name}, cannot match accurately")
-            return None
-        
-        # 寻找机构匹配的作者
-        best_match = None
-        best_name_similarity = 0
-        institution_matched = False
-        
-        for author in results:
-            # 计算姓名匹配度
-            name_similarity = SequenceMatcher(None, 
-                                            author_name.lower(), 
-                                            author.get('display_name', '').lower()).ratio()
+            logger.info(f"No institution provided for {author_name}, using first match")
+            best_match = results[0]
+        else:
+            # 寻找机构匹配的作者
+            best_match = None
+            best_name_similarity = 0
+            best_institution_similarity = 0
             
-            # 检查机构是否匹配
-            author_institutions = []
-            
-            # 从 affiliations 获取机构信息 - 使用正确的JSON结构
-            for aff in author.get('affiliations', []):
-                institution = aff.get('institution', {})
-                if institution and institution.get('display_name'):
-                    author_institutions.append(institution['display_name'])
-            
-            # 从 last_known_institutions 获取机构信息
-            for inst in author.get('last_known_institutions', []):
-                if inst.get('display_name'):
-                    author_institutions.append(inst['display_name'])
-            
-            # 调试信息：显示找到的机构
-            logger.info(f"Author '{author.get('display_name', '')}' institutions: {author_institutions}")
-            
-            # 检查是否有机构完全匹配
-            institution_match_found = False
-            matched_institution = None
-            
-            for oa_inst in author_institutions:
-                logger.info(f"Comparing institutions: '{institution_name}' <-> '{oa_inst}'")
+            for author in results:
+                # 计算姓名匹配度
+                name_similarity = SequenceMatcher(None, 
+                                                author_name.lower(), 
+                                                author.get('display_name', '').lower()).ratio()
                 
-                # 要求机构名称完全相同（忽略大小写）
-                if institution_name.lower() == oa_inst.lower():
-                    matched_institution = oa_inst
-                    institution_match_found = True
-                    logger.info(f"✓ Exact institution match found: '{institution_name}' <-> '{oa_inst}'")
-                    break
+                # 检查机构是否匹配
+                author_institutions = []
+                
+                # 从 affiliations 获取机构信息
+                for aff in author.get('affiliations', []):
+                    institution = aff.get('institution', {})
+                    if institution and institution.get('display_name'):
+                        author_institutions.append(institution['display_name'])
+                
+                # 从 last_known_institutions 获取机构信息
+                for inst in author.get('last_known_institutions', []):
+                    if inst.get('display_name'):
+                        author_institutions.append(inst['display_name'])
+                
+                # 计算最佳机构匹配度
+                max_inst_similarity = 0
+                matched_institution = None
+                
+                for oa_inst in author_institutions:
+                    inst_similarity = _calculate_institution_similarity(institution_name, oa_inst)
+                    if inst_similarity > max_inst_similarity:
+                        max_inst_similarity = inst_similarity
+                        matched_institution = oa_inst
+                
+                logger.info(f"Author '{author.get('display_name', '')}' - Name similarity: {name_similarity:.2f}, Institution similarity: {max_inst_similarity:.2f} (matched: {matched_institution})")
+                
+                # 综合评分：姓名相似度 * 0.6 + 机构相似度 * 0.4
+                combined_score = name_similarity * 0.6 + max_inst_similarity * 0.4
+                
+                # 设置最低阈值：姓名必须完全匹配，机构相似度 >= 0.7
+                if name_similarity >= 1.0 and max_inst_similarity >= 0.7:
+                    if combined_score > (best_name_similarity * 0.6 + best_institution_similarity * 0.4):
+                        best_name_similarity = name_similarity
+                        best_institution_similarity = max_inst_similarity
+                        best_match = author
+                        logger.info(f"New best match: '{author.get('display_name', '')}' at '{matched_institution}' (combined score: {combined_score:.2f})")
             
-            if not institution_match_found:
-                logger.info(f"✗ No exact institution match for '{institution_name}'")
-            
-            # 只有机构匹配的情况下才考虑该候选者
-            if institution_match_found:
-                institution_matched = True
-                # 在机构匹配的候选者中选择姓名最相似的
-                if name_similarity > best_name_similarity:
-                    best_name_similarity = name_similarity
-                    best_match = author
-                    logger.info(f"Better name match found: '{author_name}' <-> '{author.get('display_name', '')}' (similarity: {name_similarity:.2f})")
+            # 如果没有找到高置信度匹配，记录并返回 None
+            if not best_match:
+                logger.info(f"No high-confidence match found for {author_name} at {institution_name}")
+                logger.info(f"Available authors: {[author.get('display_name', '') for author in results[:5]]}")
+                return None
         
-        # 如果没有找到机构匹配的作者，返回 None
-        if not institution_matched or not best_match:
-            logger.warning(f"No author found with matching institution for {author_name} at {institution_name}")
-            return None
-        
-        # 姓名相似度也需要达到严格要求
-        if best_name_similarity < 0.8:
-            logger.warning(f"Name similarity too low for {author_name}: {best_name_similarity:.2f} (required: 0.8+)")
+        if not best_match:
+            logger.warning(f"No suitable author match found for {author_name}")
             return None
         
         # 提取学术指标
