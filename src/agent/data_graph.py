@@ -331,20 +331,24 @@ async def process_tavily_homepage_for_paper(state: Dict[str, Any]) -> Dict[str, 
     if not aff_map:
         return {"papers": [{**paper}]}
     
-    # 为每个作者获取homepage
+    # 为每个作者获取homepage和每个机构的详细信息
     for item in aff_map:
         name = (item.get("name") or "").strip()
         affiliations = item.get("affiliations", [])
         
         if not name or not affiliations:
             continue
+        
+        # 初始化每个机构的详细信息字典
+        if "affiliation_details" not in item:
+            item["affiliation_details"] = {}
             
-        # 使用第一个机构进行搜索
-        affiliation = affiliations[0] if affiliations else ""
+        # 使用第一个机构进行homepage搜索
+        primary_affiliation = affiliations[0] if affiliations else ""
         
         try:
             if _TAVILY_ENABLED:
-                homepage_result = await search_person_homepage_with_tavily(name, affiliation)
+                homepage_result = await search_person_homepage_with_tavily(name, primary_affiliation)
                 if homepage_result and homepage_result.get("search_successful"):
                     # 使用LLM从Tavily响应中提取homepage链接
                     tavily_answer = homepage_result.get('answer', '')
@@ -355,44 +359,85 @@ async def process_tavily_homepage_for_paper(state: Dict[str, Any]) -> Dict[str, 
                         from src.agent.utils import _extract_homepage_link_with_llm
                         
                         extracted_link = _extract_homepage_link_with_llm(
-                            name, affiliation, tavily_answer, tavily_results
+                            name, primary_affiliation, tavily_answer, tavily_results
                         )
                         
                         if extracted_link:
                             item["homepage"] = extracted_link
                             logger.info(f"[TAVILY] ✓ Extracted homepage for {name}: {extracted_link}")
-                            
-                            # 立即提取role、start_date、end_date信息
-                            try:
-                                from src.agent.utils import search_person_affiliation_details_with_tavily
-                                details_result = await search_person_affiliation_details_with_tavily(name, affiliation, extracted_link)
-                                if details_result and details_result.get("search_successful"):
-                                    extracted_details = details_result.get("extracted_details", {})
-                                    if extracted_details.get("role"):
-                                        item["role"] = extracted_details["role"].strip()
-                                        logger.info(f"[TAVILY] ✓ Extracted role for {name}: {extracted_details['role']}")
-                                    if extracted_details.get("start_date"):
-                                        item["start_date"] = extracted_details["start_date"]
-                                        logger.info(f"[TAVILY] ✓ Extracted start_date for {name}: {extracted_details['start_date']}")
-                                    if extracted_details.get("end_date"):
-                                        item["end_date"] = extracted_details["end_date"]
-                                        logger.info(f"[TAVILY] ✓ Extracted end_date for {name}: {extracted_details['end_date']}")
-                                    if not any(extracted_details.values()):
-                                        logger.info(f"[TAVILY] ✗ No details extracted for {name}")
-                                else:
-                                    logger.info(f"[TAVILY] ✗ Details search failed for {name}")
-                            except Exception as details_e:
-                                logger.warning(f"[TAVILY] Error getting details for {name}: {details_e}")
                         else:
                             logger.info(f"[TAVILY] ✗ LLM could not extract valid homepage link for {name}")
                     else:
                         logger.info(f"[TAVILY] ✗ No answer or results from Tavily for {name}")
                 else:
                     logger.info(f"[TAVILY] ✗ Tavily search failed for {name}")
+                
+                # 为每个机构单独获取role、start_date、end_date信息
+                for affiliation in affiliations:
+                    if not affiliation:
+                        continue
+                        
+                    try:
+                        from src.agent.utils import search_person_affiliation_details_with_tavily
+                        details_result = await search_person_affiliation_details_with_tavily(
+                            name, affiliation, item.get("homepage")
+                        )
+                        
+                        if details_result and details_result.get("search_successful"):
+                            extracted_details = details_result.get("extracted_details", {})
+                            
+                            # 存储每个机构的详细信息
+                            item["affiliation_details"][affiliation] = {
+                                "role": extracted_details.get("role", "").strip() if extracted_details.get("role") else None,
+                                "start_date": extracted_details.get("start_date"),
+                                "end_date": extracted_details.get("end_date")
+                            }
+                            
+                            if extracted_details.get("role"):
+                                logger.info(f"[TAVILY] ✓ Extracted role for {name} at {affiliation}: {extracted_details['role']}")
+                            if extracted_details.get("start_date"):
+                                logger.info(f"[TAVILY] ✓ Extracted start_date for {name} at {affiliation}: {extracted_details['start_date']}")
+                            if extracted_details.get("end_date"):
+                                logger.info(f"[TAVILY] ✓ Extracted end_date for {name} at {affiliation}: {extracted_details['end_date']}")
+                            
+                            if not any(extracted_details.values()):
+                                logger.info(f"[TAVILY] ✗ No details extracted for {name} at {affiliation}")
+                        else:
+                            logger.info(f"[TAVILY] ✗ Details search failed for {name} at {affiliation}")
+                            # 即使搜索失败也要初始化空的详细信息
+                            item["affiliation_details"][affiliation] = {
+                                "role": None,
+                                "start_date": None,
+                                "end_date": None
+                            }
+                    except Exception as details_e:
+                        logger.warning(f"[TAVILY] Error getting details for {name} at {affiliation}: {details_e}")
+                        # 出错时也要初始化空的详细信息
+                        item["affiliation_details"][affiliation] = {
+                            "role": None,
+                            "start_date": None,
+                            "end_date": None
+                        }
             else:
-                logger.info(f"[TAVILY] Disabled, skipping homepage search for {name}")
+                logger.info(f"[TAVILY] Disabled, skipping homepage and details search for {name}")
+                # Tavily禁用时，为所有机构初始化空的详细信息
+                for affiliation in affiliations:
+                    if affiliation:
+                        item["affiliation_details"][affiliation] = {
+                            "role": None,
+                            "start_date": None,
+                            "end_date": None
+                        }
         except Exception as e:
             logger.warning(f"[TAVILY] Error getting homepage for {name}: {e}")
+            # 出错时也要初始化空的详细信息
+            for affiliation in affiliations:
+                if affiliation:
+                    item["affiliation_details"][affiliation] = {
+                        "role": None,
+                        "start_date": None,
+                        "end_date": None
+                    }
     
     return {"papers": [{**paper, "author_affiliations": aff_map}]}
 
@@ -983,10 +1028,8 @@ async def _process_paper_batch_with_context(
                         if not author_id:
                             continue
                         
-                        # Get role and date information for this author
-                        author_role = author_role_map.get(name)
-                        author_start_date = author_start_date_map.get(name)
-                        author_end_date = author_end_date_map.get(name)
+                        # Get per-affiliation details from the new structure
+                        affiliation_details = item.get("affiliation_details", {})
                         
                         for aff_name in item.get("affiliations") or []:
                             if not aff_name:
@@ -1023,6 +1066,20 @@ async def _process_paper_batch_with_context(
 
                             # Enrich with QS rankings and country if available
                             await enrich_affiliation_from_qs(cur, aff_id, cleaned, qs_map, qs_names, qs_sys_ids)
+                            
+                            # Get role and date information specific to this affiliation
+                            aff_details = affiliation_details.get(aff_name, {})
+                            author_role = aff_details.get("role")
+                            author_start_date = aff_details.get("start_date")
+                            author_end_date = aff_details.get("end_date")
+                            
+                            # Fallback to author-level data if per-affiliation data is not available
+                            if not author_role:
+                                author_role = author_role_map.get(name)
+                            if not author_start_date:
+                                author_start_date = author_start_date_map.get(name)
+                            if not author_end_date:
+                                author_end_date = author_end_date_map.get(name)
                             
                             # Upsert author_affiliation: include role, start_date, end_date from Tavily/ORCID search
                             pub_dt = published_date

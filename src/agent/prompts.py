@@ -7,7 +7,7 @@ AFFILIATION_SYSTEM_PROMPT = (
     "RULES:\n"
     "- DO NOT add, remove, rename, or reorder authors.\n"
     "- If you are unsure for an author, return an empty array for that author's affiliations or null for email.\n"
-    "- Extract institution-level names (university, lab, company). Extract email addresses if present.\n"
+    "- Extract only top-level institutional names (university, institute, company, organization). Do NOT include lab names, department names, or research group names. For example, extract 'Shanghai Jiao Tong University' not 'LUMIA Lab, Shanghai Jiao Tong University'. Extract email addresses if present.\n"
     "- If superscripts/markers are present, use them to bind authors to affiliations and emails.\n"
     "- Standardize affiliation names in readable English: use proper spacing between words and correct capitalization (e.g., 'Zhejiang University' not 'ZhejiangUniversity').\n"
     "- For emails, extract the exact email address as written in the text.\n"
