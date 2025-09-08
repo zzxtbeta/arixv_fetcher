@@ -1302,22 +1302,30 @@ async def data_enrichment_api(body: DataEnrichmentRequest):
             
             logger.info(f"Processing batch {offset // concurrent_batch_size + 1}: {len(authors)} authors concurrently")
             
+            # Break if no authors found to prevent infinite loop
+            if not authors:
+                logger.info("No more authors found, ending processing")
+                break
+            
             # Prepare concurrent tasks for Tavily API calls
             tasks = []
+            author_data = []  # Store author info separately
             for author in authors:
                 author_id, author_name, aff_name = author[0], author[1], author[2] or "unknown affiliation"
                 tasks.append((
                     search_person_homepage_with_tavily,
                     (author_name, aff_name),
-                    {'author_id': author_id}
+                    {}
                 ))
+                author_data.append({
+                    'author_id': author_id,
+                    'author_name': author_name,
+                    'aff_name': aff_name
+                })
             
             # Execute tasks concurrently
             logger.info(f"Starting concurrent processing of {len(tasks)} tasks")
-            concurrent_results = await task_manager.process_batch([
-                (search_person_homepage_with_tavily, (author_name, aff_name), {})
-                for _, (author_name, aff_name), _ in tasks
-            ])
+            concurrent_results = await task_manager.process_batch(tasks)
             
             # Check if quota was exhausted during concurrent processing
             if task_manager.quota_exhausted:
@@ -1331,9 +1339,11 @@ async def data_enrichment_api(body: DataEnrichmentRequest):
             batch_updated = 0
             batch_failed = 0
             
-            for i, (author, result) in enumerate(zip(authors, concurrent_results)):
+            for i, (author_info, result) in enumerate(zip(author_data, concurrent_results)):
                 try:
-                    author_id, author_name, aff_name = author[0], author[1], author[2] or "unknown affiliation"
+                    author_id = author_info['author_id']
+                    author_name = author_info['author_name']
+                    aff_name = author_info['aff_name']
                     
                     if result and result.get('search_successful'):
                         # Extract homepage link from Tavily response
@@ -1377,11 +1387,14 @@ async def data_enrichment_api(body: DataEnrichmentRequest):
                     updated_count = await batch_update_authors_homepage(db_manager, db_batch)
                     logger.info(f"Database batch update: {updated_count} records updated")
             
+            # Add task manager errors to batch_failed count
+            batch_failed += len(task_manager.errors)
+            
             # Update counters
             total_processed += batch_processed
             total_updated += batch_updated
             total_failed += batch_failed
-            offset += concurrent_batch_size
+            offset += len(authors)  # Use actual processed count instead of concurrent_batch_size
             
             logger.info(f"Concurrent batch completed: {batch_updated} updated, {batch_failed} failed, {len(task_manager.errors)} errors")
             

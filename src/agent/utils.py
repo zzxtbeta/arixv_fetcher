@@ -1063,10 +1063,22 @@ async def create_schema_if_not_exists(cur) -> None:
             orcid TEXT UNIQUE,
             citations INT,
             H_index INT,
-            I10_index INT
+            I10_index INT,
+            homepage TEXT
         )
         """
     )
+    
+    # Add homepage column if it doesn't exist (for existing databases)
+    try:
+        await cur.execute(
+            """
+            ALTER TABLE authors ADD COLUMN IF NOT EXISTS homepage TEXT
+            """
+        )
+    except Exception:
+        # Column might already exist, ignore error
+        pass
     await cur.execute(
         """
         CREATE TABLE IF NOT EXISTS affiliations (
@@ -1261,9 +1273,97 @@ async def _rate_limit_tavily_request():
     _LAST_TAVILY_REQUEST_TIME = time.time()
     _TAVILY_REQUEST_COUNT += 1
 
+# Global variables for API key rotation
+_TAVILY_API_KEYS = [
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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"
+]
+_CURRENT_API_KEY_INDEX = 0
+_EXHAUSTED_API_KEYS = set()
+
 def get_tavily_api_key() -> Optional[str]:
-    """Get the Tavily API key from environment variable."""
-    return os.getenv("TAVILY_API_KEY")
+    """Get the current Tavily API key with automatic rotation on quota exhaustion."""
+    global _CURRENT_API_KEY_INDEX
+    
+    # First try to get from environment variable (for backward compatibility)
+    env_key = os.getenv("TAVILY_API_KEY")
+    if env_key and env_key not in _EXHAUSTED_API_KEYS:
+        return env_key
+    
+    # If env key is exhausted or not available, use rotation pool
+    while _CURRENT_API_KEY_INDEX < len(_TAVILY_API_KEYS):
+        current_key = _TAVILY_API_KEYS[_CURRENT_API_KEY_INDEX]
+        if current_key not in _EXHAUSTED_API_KEYS:
+            return current_key
+        _CURRENT_API_KEY_INDEX += 1
+    
+    # All keys exhausted
+    logger.error("All Tavily API keys have been exhausted")
+    return None
+
+def mark_tavily_key_exhausted(api_key: str) -> None:
+    """Mark an API key as exhausted and rotate to the next one."""
+    global _CURRENT_API_KEY_INDEX
+    
+    _EXHAUSTED_API_KEYS.add(api_key)
+    logger.warning(f"Tavily API key {api_key[:10]}... marked as exhausted")
+    
+    # If current key is exhausted, move to next
+    if (_CURRENT_API_KEY_INDEX < len(_TAVILY_API_KEYS) and 
+        _TAVILY_API_KEYS[_CURRENT_API_KEY_INDEX] == api_key):
+        _CURRENT_API_KEY_INDEX += 1
+        
+    # Log remaining keys
+    remaining = len(_TAVILY_API_KEYS) - len(_EXHAUSTED_API_KEYS)
+    logger.info(f"Rotating to next API key. {remaining} keys remaining")
 
 
 
@@ -1381,14 +1481,14 @@ class ConcurrentTaskManager:
         return successful_results
 
 def get_tavily_client() -> Optional[object]:
-    """Get Tavily client instance."""
+    """Get Tavily client instance with automatic API key rotation."""
     if not TAVILY_AVAILABLE:
         logger.warning("Tavily client not available. Please install: pip install tavily-python")
         return None
     
     api_key = get_tavily_api_key()
     if not api_key:
-        logger.warning("No Tavily API key available in environment variable TAVILY_API_KEY")
+        logger.warning("No Tavily API key available")
         return None
     
     # Use cached client if available
@@ -1400,8 +1500,15 @@ def get_tavily_client() -> Optional[object]:
         _TAVILY_CLIENT_CACHE[api_key] = client
         return client
     except Exception as e:
-        logger.error(f"Failed to create Tavily client with key {api_key[:10]}...: {e}")
-        return None
+        error_msg = str(e).lower()
+        if is_quota_exceeded_error(error_msg):
+            logger.warning(f"API key quota exceeded, rotating to next key: {e}")
+            mark_tavily_key_exhausted(api_key)
+            # Try with next key
+            return get_tavily_client()
+        else:
+            logger.error(f"Failed to create Tavily client with key {api_key[:10]}...: {e}")
+            return None
 
 async def search_person_role_with_tavily(name: str, affiliation: str) -> Optional[Dict[str, Any]]:
     """Search for person's role information using Tavily web search.
@@ -1481,8 +1588,20 @@ async def search_person_role_with_tavily(name: str, affiliation: str) -> Optiona
                 
                 # Check if it's a quota exceeded error
                 if is_quota_exceeded_error(error_msg):
-                    logger.error(f"API quota exceeded for current key: {error_msg}")
-                    break  # No rotation available, exit retry loop
+                    current_key = get_tavily_api_key()
+                    if current_key:
+                        logger.warning(f"API quota exceeded, rotating key: {error_msg}")
+                        mark_tavily_key_exhausted(current_key)
+                        # Clear cached client for exhausted key
+                        if current_key in _TAVILY_CLIENT_CACHE:
+                            del _TAVILY_CLIENT_CACHE[current_key]
+                        # Continue to retry with next key
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(retry_delay)
+                        continue
+                    else:
+                        logger.error("All API keys exhausted")
+                        break
                 else:
                     # Non-quota error, add delay before retry
                     if attempt < max_retries - 1:
@@ -1621,14 +1740,26 @@ async def search_person_homepage_with_tavily(name: str, affiliation: str) -> Opt
                 
                 # Check if it's a quota exceeded error
                 if is_quota_exceeded_error(error_msg):
-                    logger.error(f"API quota exceeded for current key: {error_msg}")
-                    return {
-                        "query": query,
-                        "error": "API quota exhausted",
-                        "search_successful": False,
-                        "person_name": name,
-                        "affiliation": affiliation
-                    }
+                    current_key = get_tavily_api_key()
+                    if current_key:
+                        logger.warning(f"API quota exceeded, rotating key: {error_msg}")
+                        mark_tavily_key_exhausted(current_key)
+                        # Clear cached client for exhausted key
+                        if current_key in _TAVILY_CLIENT_CACHE:
+                            del _TAVILY_CLIENT_CACHE[current_key]
+                        # Continue to retry with next key
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(retry_delay)
+                        continue
+                    else:
+                        logger.error("All API keys exhausted")
+                        return {
+                            "query": query,
+                            "error": "All API keys exhausted",
+                            "search_successful": False,
+                            "person_name": name,
+                            "affiliation": affiliation
+                        }
                 else:
                     # Non-quota error, add delay before retry
                     if attempt < max_retries - 1:
@@ -1710,8 +1841,20 @@ async def search_person_general_with_tavily(name: str, affiliation: str, search_
                 
                 # Check if it's a quota exceeded error
                 if is_quota_exceeded_error(error_msg):
-                    logger.error(f"API quota exceeded for current key: {error_msg}")
-                    break  # No rotation available, exit retry loop
+                    current_key = get_tavily_api_key()
+                    if current_key:
+                        logger.warning(f"API quota exceeded, rotating key: {error_msg}")
+                        mark_tavily_key_exhausted(current_key)
+                        # Clear cached client for exhausted key
+                        if current_key in _TAVILY_CLIENT_CACHE:
+                            del _TAVILY_CLIENT_CACHE[current_key]
+                        # Continue to retry with next key
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(retry_delay)
+                        continue
+                    else:
+                        logger.error("All API keys exhausted")
+                        break
                 else:
                     # Non-quota error, add delay before retry
                     if attempt < max_retries - 1:

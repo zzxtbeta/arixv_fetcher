@@ -535,17 +535,6 @@ async def process_homepage_extraction_for_paper(state: Dict[str, Any]) -> Dict[s
             except Exception as e:
                 logger.warning(f"[HOMEPAGE] Error processing homepage for {name}: {e}")
             
-        # 如果从homepage没有获取到role信息，尝试使用Tavily API
-        if not item.get("role") and _TAVILY_ENABLED and affiliations:
-            try:
-                tavily_result = await search_person_role_with_tavily(name, affiliations[0])
-                if tavily_result and tavily_result.get("search_successful"):
-                    extracted_role = tavily_result.get("extracted_role")
-                    if extracted_role:
-                        item["role"] = extracted_role.strip()
-                        logger.info(f"[TAVILY] ✓ Found role for {name}: {extracted_role}")
-            except Exception as e:
-                logger.warning(f"[TAVILY] Error getting role for {name}: {e}")
     
     return {"papers": [{**paper, "author_affiliations": aff_map}]}
 

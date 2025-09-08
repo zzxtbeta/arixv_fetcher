@@ -800,7 +800,7 @@ async def export_authors(format: str = Query("json", description="Export format:
             aff_links = await postgres_client.select(
                 "author_affiliation", 
                 filters={"author_id": author_id}, 
-                columns="affiliation_id, role"
+                columns="affiliation_id, role, start_date, end_date"
             ) or []
             
             # Get affiliation details
@@ -822,11 +822,15 @@ async def export_authors(format: str = Query("json", description="Export format:
                     for link in aff_links:
                         aff_id = link.get("affiliation_id")
                         role = link.get("role")
+                        start_date = link.get("start_date")
+                        end_date = link.get("end_date")
                         aff_name = aff_id_to_name.get(aff_id)
                         
                         affiliations.append({
                             "affiliation": aff_name or "Unknown",
-                            "role": role or "Unknown"
+                            "role": role or "Unknown",
+                            "start_date": start_date.isoformat() if start_date else None,
+                            "end_date": end_date.isoformat() if end_date else None
                         })
             
             # Get author's recent papers
